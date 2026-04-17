@@ -1,0 +1,25 @@
+EEG SENSOR (I2C)          ARDUINO NANO
+─────────────────          ───────────
+  SDA  ──────────────────► A4 (SDA)
+  SCL  ──────────────────► A5 (SCL)
+  GND  ──────────────────► GND
+  VCC  ──────────────────► 5V
+
+EEG SENSOR (Analog)        ARDUINO NANO
+─────────────────          ───────────
+  OUT  ──────────────────► A0
+  GND  ──────────────────► GND
+  VCC  ──────────────────► 5V
+
+JOYSTICK ANALOG OUTPUTS (PWM → RC Filter → Target Device)
+  Pin D5 ──[10kΩ]──┬──► Joystick X Axis Input
+                    │
+                 [10µF]
+                    │
+                   GND
+
+  Pin D6 ──[10kΩ]──┬──► Joystick Y Axis Input
+                    │
+                 [10µF]
+                    │
+                   GND
