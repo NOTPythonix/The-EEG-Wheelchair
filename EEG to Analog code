@@ -1,0 +1,282 @@
+// ============================================================
+//  EEG-to-Joystick Analog Signal Converter — Arduino Nano
+//  Author: Khalid | Generated for NANO EDU ecosystem
+//  Reads EEG brain signals and outputs analog joystick voltages
+// ============================================================
+
+#include <Wire.h>
+
+// ─────────────── CONFIGURATION ───────────────
+// Input mode: set to true for I2C EEG, false for analog EEG
+#define USE_I2C_EEG       true
+
+// I2C address of your EEG module (change to match your sensor)
+#define EEG_I2C_ADDR      0x57
+
+// Analog input pin (used when USE_I2C_EEG is false)
+#define EEG_ANALOG_PIN    A0
+
+// PWM output pins (must be PWM-capable: 3, 5, 6, 9, 10, 11)
+#define JOY_X_PIN         5    // Joystick X-axis output
+#define JOY_Y_PIN         6    // Joystick Y-axis output
+
+// Joystick output values (PWM 0-255)
+//   127 = center (2.5V) = no joystick movement
+//   255 = full forward/right (5V)
+//     0 = full backward/left (0V)
+#define JOY_CENTER        127
+#define JOY_FULL_FWD      255
+#define JOY_FULL_BWD      0
+
+// EEG signal thresholds (tune these to YOUR sensor!)
+#define CONCENTRATION_THRESHOLD   600   // Above = "thinking forward"
+#define RELAX_THRESHOLD           300   // Below = "thinking backward"
+#define BLINK_SPIKE_THRESHOLD     900   // Sharp spike = blink/artifact
+
+// Signal processing
+#define SAMPLE_COUNT      10    // Samples to average for smoothing
+#define RAMP_SPEED        5     // How fast joystick ramps (1=slow, 20=fast)
+#define LOOP_DELAY_MS     20    // Main loop interval (ms)
+
+// Debug
+#define DEBUG_SERIAL      true
+#define SERIAL_BAUD       115200
+
+// ─────────────── GLOBAL STATE ───────────────
+int eegRaw = 0;                  // Latest raw EEG reading
+int eegSmoothed = 0;             // Smoothed EEG value
+int eegBaseline = 512;           // Adaptive baseline (center)
+int samples[SAMPLE_COUNT];       // Rolling sample buffer
+int sampleIndex = 0;
+
+int joyXTarget = JOY_CENTER;     // Target X output
+int joyYTarget = JOY_CENTER;     // Target Y output
+int joyXCurrent = JOY_CENTER;    // Current (ramped) X output
+int joyYCurrent = JOY_CENTER;    // Current (ramped) Y output
+
+unsigned long lastUpdate = 0;
+
+// ─────────────── SETUP ───────────────
+void setup() {
+  // Init PWM outputs
+  pinMode(JOY_X_PIN, OUTPUT);
+  pinMode(JOY_Y_PIN, OUTPUT);
+  analogWrite(JOY_X_PIN, JOY_CENTER);  // Start centered
+  analogWrite(JOY_Y_PIN, JOY_CENTER);
+
+  // Init serial debug
+  if (DEBUG_SERIAL) {
+    Serial.begin(SERIAL_BAUD);
+    Serial.println(F("=== EEG-to-Joystick Converter ==="));
+    Serial.println(F("Calibrating baseline..."));
+  }
+
+  // Init I2C if needed
+  if (USE_I2C_EEG) {
+    Wire.begin();
+  }
+
+  // Fill sample buffer with center values
+  for (int i = 0; i < SAMPLE_COUNT; i++) {
+    samples[i] = 512;
+  }
+
+  // Calibrate baseline (2 seconds of quiet readings)
+  calibrateBaseline();
+
+  if (DEBUG_SERIAL) {
+    Serial.print(F("Baseline set to: "));
+    Serial.println(eegBaseline);
+    Serial.println(F("Ready! Think forward to move joystick."));
+  }
+}
+
+// ─────────────── MAIN LOOP ───────────────
+void loop() {
+  unsigned long now = millis();
+  if (now - lastUpdate < LOOP_DELAY_MS) return;
+  lastUpdate = now;
+
+  // 1. READ EEG
+  eegRaw = readEEG();
+
+  // 2. SMOOTH the signal
+  eegSmoothed = smoothSignal(eegRaw);
+
+  // 3. DETECT intent and set joystick targets
+  detectIntent(eegSmoothed);
+
+  // 4. RAMP joystick outputs smoothly toward targets
+  joyXCurrent = rampValue(joyXCurrent, joyXTarget, RAMP_SPEED);
+  joyYCurrent = rampValue(joyYCurrent, joyYTarget, RAMP_SPEED);
+
+  // 5. OUTPUT PWM (becomes analog voltage after RC filter)
+  analogWrite(JOY_X_PIN, joyXCurrent);
+  analogWrite(JOY_Y_PIN, joyYCurrent);
+
+  // 6. DEBUG
+  if (DEBUG_SERIAL) {
+    printDebug();
+  }
+}
+
+// ─────────────── EEG READING ───────────────
+
+int readEEG() {
+  if (USE_I2C_EEG) {
+    return readEEG_I2C();
+  } else {
+    return readEEG_Analog();
+  }
+}
+
+// Read from I2C/Wire EEG module
+int readEEG_I2C() {
+  int value = 512;  // Default to center if read fails
+
+  Wire.requestFrom(EEG_I2C_ADDR, (uint8_t)2);  // Request 2 bytes
+
+  if (Wire.available() >= 2) {
+    byte highByte = Wire.read();
+    byte lowByte  = Wire.read();
+    value = (highByte << 8) | lowByte;
+
+    // Clamp to 10-bit range (0–1023) like analog
+    value = constrain(value, 0, 1023);
+  }
+
+  return value;
+}
+
+// Read from analog pin (AD8232 or similar)
+int readEEG_Analog() {
+  return analogRead(EEG_ANALOG_PIN);
+}
+
+// ─────────────── SIGNAL PROCESSING ───────────────
+
+// Rolling average to smooth noisy EEG signals
+int smoothSignal(int raw) {
+  samples[sampleIndex] = raw;
+  sampleIndex = (sampleIndex + 1) % SAMPLE_COUNT;
+
+  long sum = 0;
+  for (int i = 0; i < SAMPLE_COUNT; i++) {
+    sum += samples[i];
+  }
+  return (int)(sum / SAMPLE_COUNT);
+}
+
+// Slowly adapt baseline to prevent drift
+void updateBaseline(int value) {
+  // Very slow moving average (adapts over ~10 seconds)
+  eegBaseline = eegBaseline + (value - eegBaseline) / 500;
+}
+
+// ─────────────── INTENT DETECTION ───────────────
+//
+//  This is where the magic happens!
+//  Map EEG signal levels to joystick directions.
+//
+//  Customize these thresholds for YOUR specific EEG module:
+//    - NeuroSky: uses attention/meditation bytes (0-100 scale)
+//    - AD8232: raw analog waveform (needs FFT for real use)
+//    - OpenBCI: multi-channel, much richer data
+//
+//  The default logic uses simple amplitude thresholds:
+//    HIGH signal → "concentrate" → joystick FORWARD
+//    LOW  signal → "relax"       → joystick BACKWARD
+//    SPIKE       → "blink"       → joystick LEFT tap
+//    NORMAL      → center        → no movement
+
+void detectIntent(int signal) {
+  int deviation = signal - eegBaseline;
+
+  // ── BLINK / ARTIFACT (sharp spike) ──
+  if (signal > BLINK_SPIKE_THRESHOLD) {
+    // Map blink to a LEFT tap on X-axis
+    joyXTarget = JOY_FULL_BWD;
+    // Y stays at whatever concentration says
+  }
+
+  // ── CONCENTRATION (sustained high signal) ──
+  else if (signal > CONCENTRATION_THRESHOLD) {
+    // Map to FORWARD on Y-axis
+    // Scale proportionally: higher signal = more forward
+    int intensity = map(signal, CONCENTRATION_THRESHOLD, 1023,
+                        JOY_CENTER, JOY_FULL_FWD);
+    joyYTarget = constrain(intensity, JOY_CENTER, JOY_FULL_FWD);
+    joyXTarget = JOY_CENTER;  // Keep X centered during forward
+  }
+
+  // ── RELAXATION (sustained low signal) ──
+  else if (signal < RELAX_THRESHOLD) {
+    // Map to BACKWARD on Y-axis
+    int intensity = map(signal, 0, RELAX_THRESHOLD,
+                        JOY_FULL_BWD, JOY_CENTER);
+    joyYTarget = constrain(intensity, JOY_FULL_BWD, JOY_CENTER);
+    joyXTarget = JOY_CENTER;
+  }
+
+  // ── NEUTRAL (signal near baseline) ──
+  else {
+    // Return to center (no movement)
+    joyXTarget = JOY_CENTER;
+    joyYTarget = JOY_CENTER;
+  }
+
+  // Slowly adapt baseline
+  updateBaseline(signal);
+}
+
+// ─────────────── OUTPUT HELPERS ───────────────
+
+// Smoothly ramp a value toward a target (prevents jerky movement)
+int rampValue(int current, int target, int speed) {
+  if (current < target) {
+    current = min(current + speed, target);
+  } else if (current > target) {
+    current = max(current - speed, target);
+  }
+  return current;
+}
+
+// ─────────────── CALIBRATION ───────────────
+
+void calibrateBaseline() {
+  long sum = 0;
+  int calibSamples = 100;
+
+  for (int i = 0; i < calibSamples; i++) {
+    sum += readEEG();
+    delay(20);  // 2 seconds total
+  }
+
+  eegBaseline = (int)(sum / calibSamples);
+}
+
+// ─────────────── DEBUG OUTPUT ───────────────
+
+void printDebug() {
+  static unsigned long lastPrint = 0;
+  if (millis() - lastPrint < 200) return;  // Print every 200ms
+  lastPrint = millis();
+
+  Serial.print(F("RAW:"));
+  Serial.print(eegRaw);
+  Serial.print(F(" | SMOOTH:"));
+  Serial.print(eegSmoothed);
+  Serial.print(F(" | BASE:"));
+  Serial.print(eegBaseline);
+  Serial.print(F(" | JOY X:"));
+  Serial.print(joyXCurrent);
+  Serial.print(F(" Y:"));
+  Serial.print(joyYCurrent);
+
+  // Show detected state
+  Serial.print(F(" | STATE: "));
+  if (eegSmoothed > BLINK_SPIKE_THRESHOLD)       Serial.println(F("BLINK"));
+  else if (eegSmoothed > CONCENTRATION_THRESHOLD) Serial.println(F("FORWARD"));
+  else if (eegSmoothed < RELAX_THRESHOLD)         Serial.println(F("BACKWARD"));
+  else                                            Serial.println(F("CENTER"));
+}
