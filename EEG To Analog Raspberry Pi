@@ -1,0 +1,100 @@
+#!/usr/bin/env python3
+"""
+Jetson Nano serial-word to analog-joystick emulator.
+
+Hardware:
+  - Jetson Nano
+  - MCP4728 I2C DAC module for analog X/Y joystick signals
+  - Optional NPN transistor or optocoupler for the joystick switch line
+
+Commands typed into the serial sender:
+  center, up, down, left, right,
+  up-left, up-right, down-left, down-right,
+  press, release, quit
+
+Install:
+  sudo apt-get install python3-pip
+  pip3 install pyserial adafruit-blinka adafruit-circuitpython-mcp4728 Jetson.GPIO
+"""
+
+import time
+
+import serial
+import Jetson.GPIO as GPIO
+
+import board
+import busio
+import adafruit_mcp4728
+
+
+# Change this to match your serial device.
+# Common examples:
+#   /dev/ttyUSB0  USB-to-serial adapter
+#   /dev/ttyACM0  Arduino-style board
+#   /dev/ttyTHS1  Jetson UART header
+SERIAL_PORT = "/dev/ttyUSB0"
+BAUD_RATE = 115200
+
+# Jetson BOARD pin used for joystick switch output.
+# This should drive a transistor/opto, not a 5V signal directly.
+SWITCH_PIN = 18
+
+# DAC voltage range. Most joystick inputs are center = half supply.
+# If your target expects 0-5V, use suitable 5V DAC hardware/level shifting.
+DAC_MAX_MV = 3300
+LOW_MV = 300
+CENTER_MV = DAC_MAX_MV // 2
+HIGH_MV = 3000
+
+# MCP4728 channels used for joystick axes.
+X_CHANNEL = "channel_a"
+Y_CHANNEL = "channel_b"
+
+
+POSITIONS = {
+    "center": (CENTER_MV, CENTER_MV),
+    "up": (CENTER_MV, HIGH_MV),
+    "down": (CENTER_MV, LOW_MV),
+    "left": (LOW_MV, CENTER_MV),
+    "right": (HIGH_MV, CENTER_MV),
+    "up-left": (LOW_MV, HIGH_MV),
+    "up-right": (HIGH_MV, HIGH_MV),
+    "down-left": (LOW_MV, LOW_MV),
+    "down-right": (HIGH_MV, LOW_MV),
+}
+
+
+def mv_to_raw(millivolts: int) -> int:
+    """Convert millivolts to MCP4728 12-bit DAC value."""
+    millivolts = max(0, min(DAC_MAX_MV, millivolts))
+    return round((millivolts / DAC_MAX_MV) * 4095)
+
+
+def set_axis(dac, channel_name: str, millivolts: int) -> None:
+    channel = getattr(dac, channel_name)
+    channel.value = mv_to_raw(millivolts)
+
+
+def set_position(dac, x_mv: int, y_mv: int) -> None:
+    set_axis(dac, X_CHANNEL, x_mv)
+    set_axis(dac, Y_CHANNEL, y_mv)
+    print(f"Joystick position: X={x_mv}mV Y={y_mv}mV")
+
+
+def set_button(pressed: bool) -> None:
+    # Assumes active-low switch emulation through a transistor/opto.
+    GPIO.output(SWITCH_PIN, GPIO.LOW if pressed else GPIO.HIGH)
+    print("Button:", "pressed" if pressed else "released")
+
+
+def main() -> None:
+    GPIO.setmode(GPIO.BOARD)
+    GPIO.setup(SWITCH_PIN, GPIO.OUT, initial=GPIO.HIGH)
+
+    i2c = busio.I2C(board.SCL, board.SDA)
+    dac = adafruit_mcp4728.MCP4728(i2c)
+
+    set_position(dac, CENTER_MV, CENTER_MV)
+    set_button(False)
+
+    print(f"Listening on {SERIAL_PORT} at {BAUD_RATE} baud...")
