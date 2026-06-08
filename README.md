@@ -1,2 +1,3 @@
 # The-EEG-Wheelchair
 This is the EEG wheelchair repository.
+Also Everything here is not final yet...
