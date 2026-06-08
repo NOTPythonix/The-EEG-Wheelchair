@@ -137,6 +137,7 @@ void loop() {
 //  EEG INPUT
 // ═══════════════════════════════════════
 
+//-------------------------------------AI Made evrything below------------------------------------------//
 int readEEG() {
   if (USE_I2C_EEG) {
     Wire.requestFrom((uint8_t)EEG_I2C_ADDR, (uint8_t)2);
