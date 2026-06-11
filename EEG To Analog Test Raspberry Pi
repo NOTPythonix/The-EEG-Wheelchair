@@ -1,0 +1,99 @@
+#!/usr/bin/env python3
+
+"""
+Digital joystick emulator test version.
+
+No hardware required.
+Type commands and watch the virtual joystick state change.
+
+Commands:
+center
+up
+down
+left
+right
+up-left
+up-right
+down-left
+down-right
+press
+release
+quit
+"""
+
+DAC_MAX_MV = 3300
+LOW_MV = 300
+CENTER_MV = DAC_MAX_MV // 2
+HIGH_MV = 3000
+
+POSITIONS = {
+    "center": (CENTER_MV, CENTER_MV),
+    "up": (CENTER_MV, HIGH_MV),
+    "down": (CENTER_MV, LOW_MV),
+    "left": (LOW_MV, CENTER_MV),
+    "right": (HIGH_MV, CENTER_MV),
+    "up-left": (LOW_MV, HIGH_MV),
+    "up-right": (HIGH_MV, HIGH_MV),
+    "down-left": (LOW_MV, LOW_MV),
+    "down-right": (HIGH_MV, LOW_MV),
+}
+
+joystick_x = CENTER_MV
+joystick_y = CENTER_MV
+button_pressed = False
+
+
+def set_position(x_mv, y_mv):
+    global joystick_x, joystick_y
+    joystick_x = x_mv
+    joystick_y = y_mv
+
+    print()
+    print("=== VIRTUAL JOYSTICK ===")
+    print(f"X Axis: {joystick_x} mV")
+    print(f"Y Axis: {joystick_y} mV")
+    print(f"Button: {'PRESSED' if button_pressed else 'RELEASED'}")
+    print("========================")
+
+
+def set_button(pressed):
+    global button_pressed
+    button_pressed = pressed
+
+    print()
+    print("=== VIRTUAL JOYSTICK ===")
+    print(f"X Axis: {joystick_x} mV")
+    print(f"Y Axis: {joystick_y} mV")
+    print(f"Button: {'PRESSED' if button_pressed else 'RELEASED'}")
+    print("========================")
+
+
+def main():
+    print("Digital Joystick Emulator")
+    print("Type commands (up, down, left, right, press, release, quit)")
+
+    set_position(CENTER_MV, CENTER_MV)
+
+    while True:
+        cmd = input("> ").strip().lower()
+
+        if cmd == "quit":
+            print("Exiting...")
+            break
+
+        elif cmd in POSITIONS:
+            x, y = POSITIONS[cmd]
+            set_position(x, y)
+
+        elif cmd == "press":
+            set_button(True)
+
+        elif cmd == "release":
+            set_button(False)
+
+        else:
+            print("Unknown command")
+
+
+if __name__ == "__main__":
+    main()
