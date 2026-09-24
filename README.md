@@ -9,3 +9,5 @@ What We Did So Far:
 . Bought All EEG Wheelchair Components.
 
 . Inspected Wheelchair main PCB board.
+
+. Testing MCP4822 WASD Test.
