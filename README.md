@@ -10,4 +10,6 @@ What We Did So Far:
 
 . Inspected Wheelchair main PCB board.
 
-. Testing MCP4822 WASD Test.
+. Testing MCP4822 WASD Test failed.
+
+.testing egg data reading.
