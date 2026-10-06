@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Jetson DAC Control - Base64 Buttons</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    :root{
+      --btn-w:120px;
+      --btn-h:120px;
+      --bg:#0f1720;
+      --panel:#07101a;
+      --accent:#2ea8ff;
+      --muted:#e6eef6;
+    }
+    html,body{height:100%;margin:0;background:var(--bg);color:var(--muted);font-family:Arial,Helvetica,sans-serif}
+    .wrap{max-width:980px;margin:20px auto;padding:18px}
+    h1{font-size:20px;margin:0 0 14px}
+    .row{display:flex;gap:12px;flex-wrap:wrap;margin:10px 0}
+    .btn {
+      width:var(--btn-w);
+      height:var(--btn-h);
+      border-radius:10px;
+      border:2px solid #21303a;
+      background:linear-gradient(180deg,#07121a 0%, #0b1a22 100%);
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      padding:6px;
+      cursor:pointer;
+      transition:box-shadow .12s, transform .08s, border-color .12s;
+      position:relative;
+      overflow:hidden;
+    }
+    .btn:hover{transform:translateY(-3px)}
+    .btn img{max-width:100%; max-height:100%; display:block; pointer-events:none}
+    .btn-label{position:absolute;bottom:6px;left:6px;font-size:12px;color:rgba(255,255,255,0.85);text-shadow:0 1px 2px rgba(0,0,0,0.6)}
+    .active{border-color:var(--accent); box-shadow:0 0 18px var(--accent)}
+    .controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px}
+    button.small{padding:8px 12px;min-width:unset;border-radius:8px}
+    #debug-output{width:100%;height:160px;background:var(--panel);border-radius:8px;padding:10px;margin-top:12px;overflow:auto;border:1px solid #123;color:#bfe8ff;font-size:13px}
+    .base64-editor{display:flex;gap:8px;flex-direction:column;margin-top:12px}
+    .base64-row{display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap}
+    .base64-row textarea{width:560px;max-width:90vw;height:80px;border-radius:6px;padding:8px;background:#07121a;color:var(--muted);border:1px solid #123}
+    .small-muted{font-size:12px;color:#9fb7c8}
+    .flex-right{margin-left:auto}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Jetson DAC Control Panel — Buttons use base64 images</h1>
+
+    <!-- Buttons -->
+    <div class="row" id="main-buttons">
+      <div class="btn" id="btn-forward" title="Forward"><img id="img-forward" alt="Forward"><div class="btn-label">Forward</div></div>
+      <div class="btn" id="btn-backward" title="Backward"><img id="img-backward" alt="Backward"><div class="btn-label">Backward</div></div>
+      <div class="btn" id="btn-left" title="Left"><img id="img-left" alt="Left"><div class="btn-label">Left</div></div>
+      <div class="btn" id="btn-right" title="Right"><img id="img-right" alt="Right"><div class="btn-label">Right</div></div>
+    </div>
+
+    <!-- Mode / actions -->
+    <div class="controls">
+      <button id="btn-mode" class="small">ARM Mode</button>
+      <button id="btn-enable-dac1" class="small">Enable DAC1</button>
+      <button id="btn-set-both" class="small">Set Both 2.5V</button>
+      <button id="btn-debug" class="small">Debug Read</button>
+      <div class="flex-right small-muted">Tip: paste base64 below to set images</div>
+    </div>
+
+    <!-- ARM extra -->
+    <div class="row" id="arm-row" style="display:flex;margin-top:12px;">
+      <div class="btn" id="btn-up" title="Up"><img id="img-up" alt="Up"><div class="btn-label">Up</div></div>
+      <div class="btn" id="btn-down" title="Down"><img id="img-down" alt="Down"><div class="btn-label">Down</div></div>
+    </div>
+
+    <!-- Debug output -->
+    <pre id="debug-output">Debug output will appear here.</pre>
+
+    <!-- Base64 editors: user can paste base64 strings here and press Apply -->
+    <div class="base64-editor">
+      <div class="base64-row">
+        <div style="min-width:120px"><strong>Target</strong></div>
+        <div style="min-width:420px"><strong>Base64 (data only, no data: prefix)</strong></div>
+        <div style="min-width:120px"><strong>MIME</strong></div>
+        <div style="min-width:120px"></div>
+      </div>
+
+      <!-- Forward -->
+      <div class="base64-row">
+        <div class="small-muted">Forward</div>
+        <textarea id="b64-forward" placeholder="Paste base64 image data for Forward (PNG/JPEG)"></textarea>
+        <input id="mime-forward" value="image/png" style="width:120px;padding:8px;border-radius:6px;background:#07121a;color:var(--muted);border:1px solid #123">
+        <button class="small" onclick="applyBase64ToButton('forward')">Apply</button>
+      </div>
+
+      <!-- Backward -->
+      <div class="base64-row">
+        <div class="small-muted">Backward</div>
+        <textarea id="b64-backward" placeholder="Paste base64 image data for Backward"></textarea>
+        <input id="mime-backward" value="image/png" style="width:120px;padding:8px;border-radius:6px;background:#07121a;color:var(--muted);border:1px solid #123">
+        <button class="small" onclick="applyBase64ToButton('backward')">Apply</button>
+      </div>
+
+      <!-- Left -->
+      <div class="base64-row">
+        <div class="small-muted">Left</div>
+        <textarea id="b64-left" placeholder="Paste base64 image data for Left"></textarea>
+        <input id="mime-left" value="image/png" style="width:120px;padding:8px;border-radius:6px;background:#07121a;color:var(--muted);border:1px solid #123">
+        <button class="small" onclick="applyBase64ToButton('left')">Apply</button>
+      </div>
+
+      <!-- Right -->
+      <div class="base64-row">
+        <div class="small-muted">Right</div>
+        <textarea id="b64-right" placeholder="Paste base64 image data for Right"></textarea>
+        <input id="mime-right" value="image/png" style="width:120px;padding:8px;border-radius:6px;background:#07121a;color:var(--muted);border:1px solid #123">
+        <button class="small" onclick="applyBase64ToButton('right')">Apply</button>
+      </div>
+
+      <!-- Up -->
+      <div class="base64-row">
+        <div class="small-muted">Up</div>
+        <textarea id="b64-up" placeholder="Paste base64 image data for Up"></textarea>
+        <input id="mime-up" value="image/png" style="width:120px;padding:8px;border-radius:6px;background:#07121a;color:var(--muted);border:1px solid #123">
+        <button class="small" onclick="applyBase64ToButton('up')">Apply</button>
+      </div>
+
+      <!-- Down -->
+      <div class="base64-row">
+        <div class="small-muted">Down</div>
+        <textarea id="b64-down" placeholder="Paste base64 image data for Down"></textarea>
+        <input id="mime-down" value="image/png" style="width:120px;padding:8px;border-radius:6px;background:#07121a;color:var(--muted);border:1px solid #123">
+        <button class="small" onclick="applyBase64ToButton('down')">Apply</button>
+      </div>
+
+      <div class="small-muted" style="margin-top:6px">
+        You can also call <code>setButtonBase64(name, base64, mime)</code> from the browser console to set images programmatically.
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // --- Utility: set image element src from base64 (data only, no prefix) ---
+    function setButtonBase64(name, base64Data, mime = 'image/png') {
+      if (!base64Data) return;
+      const img = document.getElementById('img-' + name);
+      if (!img) return;
+      // If user pasted a full data URL, strip the prefix
+      const cleaned = base64Data.replace(/^data:[^;]+;base64,/, '').trim();
+      img.src = `data:${mime};base64,${cleaned}`;
+    }
+
+    // Convenience wrapper used by Apply buttons
+    function applyBase64ToButton(name) {
+      const ta = document.getElementById('b64-' + name);
+      const mime = document.getElementById('mime-' + name).value || 'image/png';
+      if (!ta) return;
+      const val = ta.value.trim();
+      if (!val) {
+        alert('Paste base64 data into the textarea first.');
+        return;
+      }
+      setButtonBase64(name, val, mime);
+    }
+
+    // --- Existing control logic (fetch endpoints) ---
+    async function postJson(path, body) {
+      try {
+        const res = await fetch(path, {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify(body)
+        });
+        return await res.json();
+      } catch (e) {
+        return { error: String(e) };
+      }
+    }
+
+    // Map directions to DAC settings
+    const mapping = {
+      forward: {dac:0, voltage:3.3},
+      backward:{dac:0, voltage:0.4},
+      left:   {dac:0, voltage:3.3},
+      right:  {dac:0, voltage:0.4},
+      up:     {dac:1, voltage:3.3},
+      down:   {dac:1, voltage:0.4}
+    };
+
+    // Elements
+    const btns = {
+      forward: document.getElementById('btn-forward'),
+      backward: document.getElementById('btn-backward'),
+      left: document.getElementById('btn-left'),
+      right: document.getElementById('btn-right'),
+      up: document.getElementById('btn-up'),
+      down: document.getElementById('btn-down')
+    };
+    const btnMode = document.getElementById('btn-mode');
+    const btnEnableDAC1 = document.getElementById('btn-enable-dac1');
+    const btnSetBoth = document.getElementById('btn-set-both');
+    const btnDebug = document.getElementById('btn-debug');
+    const debugOut = document.getElementById('debug-output');
+    const armRow = document.getElementById('arm-row');
+
+    let armMode = true;
+    let dac1Enabled = false;
+
+    // Toggle ARM/Wheelchair
+    btnMode.addEventListener('click', () => {
+      armMode = !armMode;
+      if (armMode) {
+        btnMode.textContent = 'ARM Mode';
+        armRow.style.display = 'flex';
+      } else {
+        btnMode.textContent = 'Wheelchair Mode';
+        armRow.style.display = 'none';
+        // ensure DAC1 outputs are stopped when ARM removed
+        postJson('/set_dac', {dac:1, voltage:0.0});
+        setActive('up', false); setActive('down', false);
+      }
+    });
+
+    // Enable/disable DAC1
+    btnEnableDAC1.addEventListener('click', async () => {
+      dac1Enabled = !dac1Enabled;
+      btnEnableDAC1.textContent = dac1Enabled ? 'Disable DAC1' : 'Enable DAC1';
+      const r = await postJson('/enable_dac', {dac:1, enabled:dac1Enabled});
+      debugOut.textContent = JSON.stringify(r, null, 2);
+    });
+
+    // Set both to 2.5V
+    btnSetBoth.addEventListener('click', async () => {
+      const r = await postJson('/set_both', {voltage:2.5});
+      debugOut.textContent = JSON.stringify(r, null, 2);
+    });
+
+    // Debug read
+    btnDebug.addEventListener('click', async () => {
+      try {
+        const r = await fetch('/read_debug');
+        const j = await r.json();
+        debugOut.textContent = JSON.stringify(j, null, 2);
+      } catch (e) {
+        debugOut.textContent = 'Error: ' + e;
+      }
+    });
+
+    // Active state helpers
+    function setActive(name, on) {
+      const el = btns[name];
+      if (!el) return;
+      if (on) el.classList.add('active'); else el.classList.remove('active');
+    }
+
+    async function setDirectionActive(name, active) {
+      const map = mapping[name];
+      if (!map) return;
+      const dac = map.dac;
+      const voltage = active ? map.voltage : 0.0;
+      // If dac==1 and dac1Enabled is false, server will skip; still call for clarity
+      const r = await postJson('/set_dac', {dac: dac, voltage: voltage});
+      debugOut.textContent = JSON.stringify(r, null, 2);
+    }
+
+    // Toggle on click (this is a simple UI behavior; replace with your "function true" logic if needed)
+    Object.keys(btns).forEach(name => {
+      const el = btns[name];
+      el.addEventListener('click', async () => {
+        const on = !el.classList.contains('active');
+        setActive(name, on);
+        await setDirectionActive(name, on);
+      });
+    });
+
+    // Expose helper to console for programmatic control
+    window.setButtonBase64 = setButtonBase64;
+    window.applyBase64ToButton = applyBase64ToButton;
+
+    // Optional: load any prefilled base64 textareas on startup
+    window.addEventListener('load', () => {
+      ['forward','backward','left','right','up','down'].forEach(n=>{
+        const ta = document.getElementById('b64-'+n);
+        const mime = document.getElementById('mime-'+n);
+        if (ta && ta.value.trim()) setButtonBase64(n, ta.value.trim(), mime ? mime.value : 'image/png');
+      });
+      // reflect server status
+      pollStatus();
+      setInterval(pollStatus, 3000);
+    });
+
+    async function pollStatus(){
+      try {
+        const r = await fetch('/status');
+        const j = await r.json();
+        if (j && j.dac_enabled) {
+          dac1Enabled = !!j.dac_enabled[1];
+          btnEnableDAC1.textContent = dac1Enabled ? 'Disable DAC1' : 'Enable DAC1';
+        }
+      } catch(e){}
+    }
+  </script>
+</body>
+</html>
