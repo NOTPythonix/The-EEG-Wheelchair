@@ -14,4 +14,6 @@ What We Did So Far:
 
 .testing egg data reading.
 
-. Might be using SVEEP for moving the Wheelchair
+. Might Not be using SVEEP for moving the Wheelchair
+
+. Made the Final HTML and python code for Jetson Orin Nano EEG Wheelchair Project! (We need to add the functions later)
