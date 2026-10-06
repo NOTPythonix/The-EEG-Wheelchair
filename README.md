@@ -12,7 +12,7 @@ What We Did So Far:
 
 . Testing MCP4822 WASD Test failed.
 
-.testing egg data reading.
+. Testing egg data reading.
 
 . Might Not be using SVEEP for moving the Wheelchair
 
