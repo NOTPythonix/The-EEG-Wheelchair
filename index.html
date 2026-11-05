@@ -1,0 +1,725 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#07111f" />
+  <title>ALLEY Mobility — Wheelchair Control UI</title>
+  <style>
+    :root {
+      --bg: #07111f;
+      --panel: rgba(12, 27, 45, .82);
+      --panel-2: rgba(15, 34, 55, .9);
+      --line: rgba(122, 180, 221, .16);
+      --text: #eaf5ff;
+      --muted: #88a3bc;
+      --cyan: #55e6ff;
+      --blue: #4f8cff;
+      --green: #61f2b2;
+      --amber: #ffca75;
+      --red: #ff667e;
+      --shadow: 0 24px 70px rgba(0,0,0,.36);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--text);
+      background:
+        radial-gradient(ellipse at 50% 5%, rgba(31, 116, 173, .22), transparent 35%),
+        radial-gradient(ellipse at 90% 80%, rgba(25, 75, 139, .16), transparent 35%),
+        linear-gradient(145deg, #050c16 0%, #091729 52%, #07111f 100%);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      overflow-x: hidden;
+    }
+    body::before {
+      content: ""; position: fixed; inset: 0; pointer-events: none; opacity: .2;
+      background-image: linear-gradient(rgba(115,184,224,.07) 1px, transparent 1px), linear-gradient(90deg, rgba(115,184,224,.07) 1px, transparent 1px);
+      background-size: 42px 42px;
+      mask-image: linear-gradient(to bottom, black, transparent 86%);
+    }
+    button { font: inherit; }
+    .app { width: min(1500px, 100%); margin: 0 auto; padding: 24px clamp(14px, 3vw, 38px) 34px; position: relative; }
+    .topbar { display:flex; align-items:center; justify-content:space-between; gap:18px; margin-bottom: 24px; }
+    .brand { display:flex; align-items:center; gap:13px; }
+    .brand-mark { width:42px; height:42px; display:grid; place-items:center; border-radius:13px; color:#06121f; background:linear-gradient(135deg,var(--cyan),#78a8ff); box-shadow:0 0 28px rgba(85,230,255,.25); }
+    .brand-mark svg { width:24px; height:24px; }
+    .brand-name { font-size:14px; font-weight:800; letter-spacing:.16em; }
+    .brand-sub { margin-top:3px; color:var(--muted); font-size:10px; letter-spacing:.18em; text-transform:uppercase; }
+    .top-right { display:flex; align-items:center; gap:10px; flex-wrap:wrap; justify-content:flex-end; }
+    .top-chip { display:flex; align-items:center; gap:8px; padding:9px 12px; border:1px solid var(--line); border-radius:999px; background:rgba(11,26,43,.68); color:#b8cce0; font-size:11px; letter-spacing:.08em; text-transform:uppercase; }
+    .dot { width:7px; height:7px; border-radius:50%; background:var(--green); box-shadow:0 0 12px currentColor; }
+    .dot.amber { background:var(--amber); color:var(--amber); }
+    .hero { margin-bottom:22px; display:flex; align-items:flex-end; justify-content:space-between; gap:18px; }
+    .eyebrow { color:var(--cyan); font-size:10px; font-weight:800; letter-spacing:.25em; text-transform:uppercase; margin-bottom:9px; }
+    h1 { margin:0; font-size:clamp(27px,4vw,43px); line-height:1.05; letter-spacing:-.045em; font-weight:750; }
+    .hero p { color:var(--muted); margin:10px 0 0; font-size:13px; max-width:600px; line-height:1.6; }
+    .sim-note { padding:10px 13px; border:1px solid rgba(255,202,117,.25); background:rgba(255,202,117,.07); border-radius:12px; color:#ffd99c; font-size:11px; line-height:1.4; max-width:260px; }
+    .sim-note strong { display:block; font-size:10px; letter-spacing:.13em; text-transform:uppercase; margin-bottom:3px; }
+    .dashboard { display:grid; grid-template-columns: minmax(220px, 260px) minmax(390px, 1fr) minmax(250px, 300px); gap:16px; align-items:stretch; }
+    .panel { border:1px solid var(--line); border-radius:19px; background:linear-gradient(155deg, rgba(17,37,60,.9), rgba(8,21,37,.9)); box-shadow:var(--shadow); overflow:hidden; }
+    .panel-head { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:17px 18px 13px; border-bottom:1px solid rgba(122,180,221,.1); }
+    .panel-title { font-size:11px; text-transform:uppercase; letter-spacing:.16em; font-weight:800; color:#c9d9e9; }
+    .panel-kicker { font-size:10px; color:#66839e; letter-spacing:.08em; }
+    .controls-body { padding:17px; }
+    .jetson-connect { padding:12px; margin-bottom:14px; border-radius:12px; background:rgba(4,14,25,.55); border:1px solid rgba(85,230,255,.16); }
+    .jetson-connect label { display:block; color:#7f9bb4; font-size:9px; letter-spacing:.14em; text-transform:uppercase; margin-bottom:7px; }
+    .connect-row { display:flex; gap:7px; }
+    .connect-row input { min-width:0; flex:1; width:100%; border:1px solid rgba(122,180,221,.22); border-radius:8px; padding:9px 10px; color:#eaf5ff; outline:none; background:rgba(2,10,18,.8); font:11px ui-monospace,monospace; }
+    .connect-row input:focus { border-color:var(--cyan); }
+    .token-row { margin-top:0; }
+    .connect-row button { cursor:pointer; border:0; border-radius:8px; padding:0 11px; color:#06121f; background:linear-gradient(120deg,#5ce7f6,#76aaff); font-size:9px; font-weight:850; letter-spacing:.08em; text-transform:uppercase; }
+    .connect-help { display:block; margin-top:7px; color:#728da5; font-size:9px; line-height:1.45; }
+    .voltage-card { margin-bottom:14px; padding:12px; border-radius:12px; background:rgba(4,14,25,.55); border:1px solid rgba(85,230,255,.16); }
+    .voltage-card-head { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px; }
+    .voltage-card label { color:#7f9bb4; font-size:9px; letter-spacing:.14em; text-transform:uppercase; }
+    .voltage-card select { background:#071525; color:#dff6ff; border:1px solid rgba(122,180,221,.25); border-radius:8px; padding:7px 9px; font:11px ui-monospace,monospace; }
+    .voltage-map { display:grid; grid-template-columns:1fr 1fr; gap:5px 9px; color:#7895ae; font:9px ui-monospace,monospace; }
+    .voltage-map b { color:#c8eaff; font-weight:700; }
+    .voltage-help { display:block; margin-top:8px; color:#728da5; font-size:9px; line-height:1.45; }
+    .top-chip.offline { color:#ffb5c0; }
+    .top-chip.online { color:#9bf4c9; border-color:rgba(97,242,178,.3); }
+    .top-chip.online .dot { background:var(--green); }
+    .top-chip.offline .dot { background:var(--amber); color:var(--amber); }
+    .move-state { padding:13px 14px; border-radius:13px; background:rgba(4,14,25,.55); border:1px solid rgba(122,180,221,.12); margin-bottom:17px; }
+    .state-label { color:#718ba5; font-size:9px; letter-spacing:.17em; text-transform:uppercase; }
+    .state-value { margin-top:5px; display:flex; align-items:center; gap:9px; font-size:19px; font-weight:750; letter-spacing:-.02em; }
+    .state-arrow { color:var(--cyan); font-size:20px; width:23px; text-align:center; }
+    .dpad { width:196px; height:196px; margin:0 auto 17px; display:grid; grid-template:repeat(3,1fr)/repeat(3,1fr); gap:7px; }
+    .dir-btn { border:1px solid rgba(108,169,211,.22); border-radius:13px; background:linear-gradient(145deg,rgba(31,61,91,.85),rgba(13,31,51,.9)); color:#a9c5dc; cursor:pointer; display:grid; place-items:center; transition:transform .15s,border-color .15s,background .15s,box-shadow .15s; user-select:none; touch-action:none; }
+    .dir-btn:hover { border-color:rgba(85,230,255,.65); color:#e5fbff; }
+    .dir-btn:active,.dir-btn.active { transform:scale(.96); color:#06121f; border-color:var(--cyan); background:linear-gradient(145deg,#79efff,#64aaff); box-shadow:0 0 24px rgba(85,230,255,.28); }
+    .dir-btn svg { width:22px; height:22px; }
+    .dir-btn.forward { grid-area:1/2; }
+    .dir-btn.left { grid-area:2/1; }
+    .dir-btn.stop { grid-area:2/2; background:rgba(255,102,126,.08); color:#ff91a2; border-color:rgba(255,102,126,.25); font-size:10px; font-weight:850; letter-spacing:.08em; }
+    .dir-btn.stop:active { color:white; background:var(--red); }
+    .dir-btn.right { grid-area:2/3; }
+    .dir-btn.backward { grid-area:3/2; }
+    .controls-hint { color:#7690aa; font-size:10px; text-align:center; line-height:1.6; margin-bottom:15px; }
+    .key { display:inline-block; min-width:20px; padding:2px 5px; margin:0 1px; text-align:center; border:1px solid rgba(146,184,215,.22); border-radius:5px; color:#c7d9e9; background:rgba(255,255,255,.04); font-size:9px; }
+    .action-row { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+    .action-btn { cursor:pointer; padding:10px 9px; border-radius:10px; border:1px solid var(--line); background:rgba(38,76,111,.23); color:#b9d2e8; font-size:10px; font-weight:750; letter-spacing:.07em; text-transform:uppercase; }
+    .action-btn:hover { border-color:rgba(85,230,255,.45); color:white; }
+    .action-btn.primary { color:#06121f; border:0; background:linear-gradient(120deg,#5ce7f6,#76aaff); }
+    .visual-panel { min-height:610px; display:flex; flex-direction:column; position:relative; }
+    .visual-top { position:absolute; z-index:2; top:17px; left:19px; right:19px; display:flex; align-items:center; justify-content:space-between; gap:12px; pointer-events:none; }
+    .view-label { color:#8aa7c1; font-size:10px; letter-spacing:.15em; text-transform:uppercase; }
+    .view-badge { display:flex; align-items:center; gap:7px; border:1px solid rgba(85,230,255,.2); background:rgba(4,17,30,.72); padding:7px 10px; border-radius:999px; font-size:9px; color:#9feeff; letter-spacing:.12em; text-transform:uppercase; }
+    .stage { flex:1; min-height:480px; display:grid; place-items:center; position:relative; overflow:hidden; background:radial-gradient(ellipse at 50% 48%,rgba(30,111,161,.2),transparent 47%),linear-gradient(180deg,rgba(7,21,37,.1),rgba(4,13,24,.45)); }
+    .stage::before { content:""; position:absolute; width:78%; height:25%; bottom:12%; border-radius:50%; background:rgba(36,139,186,.12); filter:blur(37px); }
+    .floor-grid { position:absolute; width:130%; height:48%; bottom:-8%; transform:perspective(340px) rotateX(61deg); transform-origin:top center; opacity:.36; background-image:linear-gradient(rgba(73,168,213,.22) 1px,transparent 1px),linear-gradient(90deg,rgba(73,168,213,.22) 1px,transparent 1px); background-size:42px 42px; mask-image:linear-gradient(to bottom,black,transparent 90%); }
+    .orbit { position:absolute; width:min(75%,480px); aspect-ratio:1; border:1px solid rgba(76,181,223,.11); border-radius:50%; transform:rotateX(68deg) rotateZ(-17deg); }
+    .orbit::before,.orbit::after { content:""; position:absolute; inset:12%; border:1px dashed rgba(76,181,223,.14); border-radius:50%; }
+    .orbit::after { inset:28%; border-style:solid; opacity:.6; }
+    .chair-wrap { width:min(96%,620px); position:relative; z-index:1; transform-style:preserve-3d; transition:transform .5s ease; filter:drop-shadow(0 14px 18px rgba(0,0,0,.28)); }
+    .chair-wrap.moving { animation:float .8s ease-in-out infinite alternate; }
+    .chair-svg { width:100%; height:auto; overflow:visible; }
+    .schematic-svg { filter:drop-shadow(0 0 10px rgba(85,230,255,.08)); }
+    .wheel-spin { transform-box:fill-box; transform-origin:center; }
+    .moving .wheel-spin { animation:wheel .65s linear infinite; }
+    @keyframes wheel { to { transform:rotate(360deg); } }
+    @keyframes float { from { translate:0 0; } to { translate:0 -5px; } }
+    .direction-halo { position:absolute; z-index:0; width:120px; height:120px; display:grid; place-items:center; color:var(--cyan); opacity:0; transition:opacity .2s, transform .25s; filter:drop-shadow(0 0 15px currentColor); }
+    .direction-halo svg { width:75px; height:75px; stroke-width:1.5; }
+    .direction-halo.show { opacity:.8; }
+    .direction-halo.forward { top:17%; left:calc(50% - 60px); }
+    .direction-halo.backward { bottom:13%; left:calc(50% - 60px); transform:rotate(180deg); }
+    .direction-halo.left { left:7%; top:47%; transform:rotate(-90deg); }
+    .direction-halo.right { right:7%; top:47%; transform:rotate(90deg); }
+    .visual-footer { display:grid; grid-template-columns:repeat(3,1fr); gap:1px; border-top:1px solid rgba(122,180,221,.1); background:rgba(2,10,18,.38); }
+    .metric { padding:14px 17px; background:rgba(9,23,39,.62); }
+    .metric-label { color:#718ba5; font-size:9px; text-transform:uppercase; letter-spacing:.13em; }
+    .metric-value { margin-top:6px; font-size:16px; font-weight:750; color:#d9f1ff; }
+    .metric-value small { font-size:10px; color:#7f9db8; font-weight:500; }
+    .right-col { display:flex; flex-direction:column; gap:16px; }
+    .telemetry-body { padding:16px 17px 18px; }
+    .telemetry-item { margin-bottom:15px; }
+    .telemetry-item:last-child { margin-bottom:0; }
+    .telemetry-line { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:7px; color:#9ab2c8; font-size:10px; }
+    .telemetry-line strong { color:#dceeff; font-size:11px; font-weight:700; }
+    .bar { height:5px; border-radius:99px; background:rgba(121,161,194,.13); overflow:hidden; }
+    .bar span { display:block; height:100%; width:0%; border-radius:inherit; background:linear-gradient(90deg,#3b9bff,#5be8fa); transition:width .3s; }
+    .eeG-body { padding:16px 17px 18px; }
+    .future-label { display:inline-flex; align-items:center; gap:6px; color:#a9d9ff; background:rgba(79,140,255,.1); border:1px solid rgba(79,140,255,.2); padding:6px 8px; border-radius:7px; font-size:9px; text-transform:uppercase; letter-spacing:.1em; }
+    .eeg-title { font-size:17px; font-weight:750; margin:12px 0 5px; letter-spacing:-.02em; }
+    .eeg-copy { color:#819ab2; font-size:10px; line-height:1.55; margin:0 0 14px; }
+    .pipeline { display:flex; align-items:center; justify-content:space-between; gap:4px; padding:10px 8px; background:rgba(4,14,25,.55); border:1px solid rgba(122,180,221,.1); border-radius:10px; }
+    .pipe-node { flex:1; min-width:0; text-align:center; }
+    .pipe-icon { width:24px; height:24px; margin:0 auto 5px; display:grid; place-items:center; border-radius:7px; background:rgba(81,158,227,.13); color:#80c9ff; font-size:12px; }
+    .pipe-name { color:#a8bfd3; font-size:8px; line-height:1.25; }
+    .pipe-arrow { color:#50718d; font-size:12px; margin-top:-11px; }
+    .eeg-status { display:flex; justify-content:space-between; align-items:center; margin-top:12px; color:#839cb4; font-size:10px; }
+    .status-off { color:#ffcb83; display:flex; gap:6px; align-items:center; }
+    .mini-log { margin-top:12px; padding:9px 10px; border-radius:8px; background:rgba(2,10,18,.55); color:#6f8da7; font:9px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace; }
+    .mini-log span { color:#8fdffc; }
+    .console { margin-top:17px; border:1px solid rgba(85,230,255,.18); border-radius:16px; background:rgba(4,13,23,.92); box-shadow:0 20px 50px rgba(0,0,0,.25); overflow:hidden; }
+    .console-head { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 15px; }
+    .console-title { display:flex; align-items:center; gap:9px; color:#bbd3e7; font-size:10px; font-weight:800; text-transform:uppercase; letter-spacing:.14em; }
+    .console-title svg { width:15px; height:15px; color:var(--cyan); }
+    .console-tools { display:flex; align-items:center; gap:8px; }
+    .console-count { color:#68859e; font:9px ui-monospace,monospace; }
+    .console-toggle,.clear-btn { cursor:pointer; border:1px solid rgba(122,180,221,.16); color:#a8c2d8; background:rgba(36,73,105,.18); border-radius:7px; padding:6px 9px; font-size:9px; }
+    .console-toggle:hover,.clear-btn:hover { color:white; border-color:rgba(85,230,255,.4); }
+    .console-content { border-top:1px solid rgba(122,180,221,.1); padding:11px 15px 13px; max-height:175px; overflow:auto; font:10px/1.75 ui-monospace,SFMono-Regular,Menlo,monospace; }
+    .console-content[hidden] { display:none; }
+    .log-row { display:flex; gap:10px; color:#8ca6bd; white-space:pre-wrap; overflow-wrap:anywhere; }
+    .log-time { color:#506d85; flex:0 0 auto; }
+    .log-type { color:#5ce5f7; flex:0 0 43px; }
+    .log-row.warn .log-type { color:var(--amber); }
+    .log-row.error .log-type { color:var(--red); }
+    .console-prompt { display:flex; gap:9px; align-items:center; border-top:1px solid rgba(122,180,221,.08); padding:8px 15px; color:#5b7a94; font:9px ui-monospace,monospace; }
+    .console-prompt span:first-child { color:var(--green); }
+    .footer { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:15px; color:#59748c; font-size:9px; letter-spacing:.07em; }
+    .footer strong { color:#87a7c1; font-weight:600; }
+    @media (max-width:1100px) { .dashboard { grid-template-columns:230px minmax(350px,1fr); } .right-col { grid-column:1/-1; display:grid; grid-template-columns:1fr 1fr; } .visual-panel { min-height:570px; } }
+    @media (max-width:720px) { .app { padding-top:15px; } .topbar { align-items:flex-start; } .top-chip:nth-child(2) { display:none; } .hero { align-items:flex-start; flex-direction:column; } .sim-note { max-width:none; } .dashboard { grid-template-columns:1fr; } .visual-panel { grid-row:1; min-height:480px; } .stage { min-height:380px; } .controls-panel { grid-row:2; } .right-col { grid-column:auto; grid-template-columns:1fr; } .visual-footer .metric { padding:11px; } .metric-value { font-size:14px; } .footer { align-items:flex-start; flex-direction:column; } }
+    @media (max-width:420px) { .brand-sub { letter-spacing:.1em; } .top-chip { font-size:9px; padding:8px 9px; } .dpad { width:178px; height:178px; } .visual-panel { min-height:440px; } .stage { min-height:340px; } }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="17" r="4.3"/><path d="M8 12.7V5h5l2 3h3M8 8h4M12.5 12.5l3.3 5h4.7"/></svg>
+        </div>
+        <div><div class="brand-name">ALLEY MOBILITY</div><div class="brand-sub">Intelligent wheelchair interface</div></div>
+      </div>
+      <div class="top-right">
+        <div class="top-chip"><i class="dot"></i> UI online</div>
+        <div class="top-chip offline" id="jetsonChip"><i class="dot amber" id="jetsonDot"></i><span id="jetsonStatus">Jetson offline</span></div>
+        <div class="top-chip" id="clock">--:--:--</div>
+      </div>
+    </header>
+
+    <section class="hero">
+      <div><div class="eyebrow">Mobility command center / 01</div><h1>Movement overview<span style="color:var(--cyan)">.</span></h1><p>Live command link between this dashboard and the Jetson Orin Nano. Browser controls and Jetson-terminal WASD are exchanged over your local network.</p></div>
+      <div class="sim-note"><strong><span style="margin-right:6px">●</span>Live command bridge</strong>WASD controls the Jetson bridge. Select a 3.3 V or 5.0 V output ceiling. DAC output remains disabled unless deliberately armed on the Jetson.</div>
+    </section>
+
+    <section class="dashboard">
+      <section class="panel controls-panel">
+        <div class="panel-head"><div class="panel-title">Drive commands</div><div class="panel-kicker">JETSON LINK</div></div>
+        <div class="controls-body">
+          <div class="jetson-connect">
+            <label for="jetsonHost">Jetson LAN hostname (.local) or IP address</label>
+            <div class="connect-row"><input id="jetsonHost" type="text" spellcheck="false" autocomplete="off" placeholder="Example: orin.local or 192.168.1.50"><button id="connectBtn" type="button">Connect</button></div>
+            <label for="bridgeToken" style="display:block;margin-top:10px">Private LAN access token</label>
+            <div class="connect-row token-row"><input id="bridgeToken" type="password" spellcheck="false" autocomplete="off" placeholder="Paste token from Jetson installer"></div>
+            <span class="connect-help" id="connectHelp">Use the .local hostname printed by the Jetson installer, or one of its printed LAN IPs. Import the Jetson CA certificate on this device, then connect using WSS. The browser may ask permission to access your local network.</span>
+          </div>
+          <div class="voltage-card">
+            <div class="voltage-card-head">
+              <label for="voltageMode">DAC voltage mode</label>
+              <select id="voltageMode" aria-label="DAC voltage mode">
+                <option value="3.3">3.3 V mode</option>
+                <option value="5.0">5.0 V mode</option>
+              </select>
+            </div>
+            <div class="voltage-map">
+              <span>Forward <b id="mapForward">3.3 / 1.0 V</b></span>
+              <span>Backward <b id="mapBackward">1.0 / 3.3 V</b></span>
+              <span>Left <b id="mapLeft">3.3 / 3.3 V</b></span>
+              <span>Right <b id="mapRight">1.0 / 1.0 V</b></span>
+              <span>Released <b id="mapStop">2.5 / 2.5 V</b></span>
+            </div>
+            <span class="voltage-help" id="voltageHelp">3.3 V mode caps any 5.0 V command at 3.3 V. Release sends 2.5 V to both axes.</span>
+          </div>
+          <div class="move-state"><div class="state-label">Current direction</div><div class="state-value"><span class="state-arrow" id="stateArrow">●</span><span id="stateText">Stopped</span></div></div>
+          <div class="dpad" aria-label="Wheelchair direction command controls">
+            <button class="dir-btn forward" data-dir="forward" aria-label="Send forward command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"/></svg></button>
+            <button class="dir-btn left" data-dir="left" aria-label="Send left command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M11 6l-6 6 6 6"/></svg></button>
+            <button class="dir-btn stop" data-dir="stop" aria-label="Send stop command">STOP</button>
+            <button class="dir-btn right" data-dir="right" aria-label="Send right command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14m-6-6 6 6-6 6"/></svg></button>
+            <button class="dir-btn backward" data-dir="backward" aria-label="Send backward command"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14m6-6-6 6-6-6"/></svg></button>
+          </div>
+          <div class="controls-hint">Hold a direction to send commands · Release sends 2.5 V / 2.5 V<br><span class="key">W</span><span class="key">A</span><span class="key">S</span><span class="key">D</span> or arrow keys · <span class="key">SPACE</span> stop</div>
+          <div class="action-row"><button class="action-btn primary" id="stopBtn">Send STOP</button><button class="action-btn" id="resetBtn">Reset view</button></div>
+        </div>
+      </section>
+
+      <section class="panel visual-panel">
+        <div class="visual-top"><div class="view-label">Wheelchair technical schematic / live command preview</div><div class="view-badge"><i class="dot"></i><span id="viewMode">Standby</span></div></div>
+        <div class="stage">
+          <div class="floor-grid"></div><div class="orbit"></div>
+          <div class="direction-halo forward" id="halo-forward"><svg viewBox="0 0 80 80" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M40 66V14M19 35 40 14l21 21"/></svg></div>
+          <div class="direction-halo backward" id="halo-backward"><svg viewBox="0 0 80 80" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M40 66V14M19 35 40 14l21 21"/></svg></div>
+          <div class="direction-halo left" id="halo-left"><svg viewBox="0 0 80 80" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M40 66V14M19 35 40 14l21 21"/></svg></div>
+          <div class="direction-halo right" id="halo-right"><svg viewBox="0 0 80 80" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M40 66V14M19 35 40 14l21 21"/></svg></div>
+          <div class="chair-wrap" id="chairWrap">
+            <svg class="chair-svg schematic-svg" viewBox="0 0 700 500" role="img" aria-label="Technical side schematic of a conventional powered wheelchair, including a seven-inch touchscreen mounted on the armrest, joystick, padded seat, rear drive wheel and motor, battery enclosure, front caster, and footrest">
+              <defs>
+                <pattern id="schematicGrid" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M20 0H0V20" fill="none" stroke="#294a63" stroke-width=".65" opacity=".55"/></pattern>
+                <linearGradient id="schematicMetal" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#bdeeff"/><stop offset="1" stop-color="#4f91b8"/></linearGradient>
+                <linearGradient id="schematicScreen" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#173b55"/><stop offset="1" stop-color="#061523"/></linearGradient>
+                <filter id="schematicGlow"><feGaussianBlur stdDeviation="2.2" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+              </defs>
+
+              <!-- Drawing field and technical guide marks -->
+              <rect x="10" y="10" width="680" height="480" rx="13" fill="#081727" opacity=".36"/>
+              <rect x="10" y="10" width="680" height="480" rx="13" fill="url(#schematicGrid)" opacity=".53"/>
+              <path d="M35 438H665M35 58H665" stroke="#37617d" stroke-width="1" stroke-dasharray="3 7" opacity=".55"/>
+              <text x="36" y="39" fill="#69dfff" font-size="10" font-family="ui-monospace,monospace" letter-spacing="2">POWERED CHAIR / SIDE ELEVATION</text>
+              <text x="665" y="39" text-anchor="end" fill="#789bb4" font-size="9" font-family="ui-monospace,monospace" letter-spacing="1">SCHEMATIC • NTS</text>
+
+              <!-- Rear drive wheel: tire, rim, spokes and hub -->
+              <g id="rear-wheel">
+                <circle cx="226" cy="337" r="111" fill="#07111b" fill-opacity=".5" stroke="#8edfff" stroke-width="2.5"/>
+                <circle cx="226" cy="337" r="101" fill="none" stroke="#4e91b7" stroke-width="1.5" stroke-dasharray="4 5"/>
+                <circle cx="226" cy="337" r="88" fill="none" stroke="#6db7d8" stroke-width="1.5"/>
+                <g class="wheel-spin" stroke="#86dfff" stroke-width="2.1" opacity=".9">
+                  <path d="M226 249V425M138 337H314M164 275L288 399M288 275L164 399M192 253L260 421M142 303L310 371M260 253L192 421M142 371L310 303"/>
+                </g>
+                <circle cx="226" cy="337" r="25" fill="#102d42" stroke="#a8eaff" stroke-width="2.5"/>
+                <circle cx="226" cy="337" r="8" fill="#9ce8ff"/>
+                <path d="M132 279A111 111 0 0 1 167 248" fill="none" stroke="#d0f5ff" stroke-width="2" opacity=".65"/>
+              </g>
+
+              <!-- Frame rails and chassis -->
+              <g fill="none" stroke="url(#schematicMetal)" stroke-width="9" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M226 337L276 256L366 282L438 350"/>
+                <path d="M270 231L300 333L426 354"/>
+                <path d="M300 333L256 352"/>
+                <path d="M367 282L397 225"/>
+              </g>
+              <g fill="none" stroke="#d5f5ff" stroke-width="1.2" opacity=".8">
+                <path d="M226 337L276 256L366 282L438 350M270 231L300 333L426 354M300 333L256 352M367 282L397 225"/>
+              </g>
+
+              <!-- Seat base and padded backrest -->
+              <path d="M248 210L270 84Q274 69 291 75L342 91Q354 96 351 111L330 223Z" fill="#15334a" fill-opacity=".9" stroke="#8edfff" stroke-width="2.3"/>
+              <path d="M264 96L337 115M260 122L333 141M256 149L329 168M252 176L325 195" stroke="#73b7d6" stroke-width="1.5" opacity=".65"/>
+              <path d="M256 214L378 239L426 220L304 195Z" fill="#16364d" stroke="#9be7ff" stroke-width="2.2"/>
+              <path d="M266 211L376 232" stroke="#d1f6ff" stroke-width="1.4" opacity=".6"/>
+
+              <!-- Armrest and joystick -->
+              <path d="M265 180L403 185L432 177" fill="none" stroke="#b8eaff" stroke-width="9" stroke-linecap="round"/>
+              <path d="M265 180L403 185L432 177" fill="none" stroke="#355d78" stroke-width="3" stroke-linecap="round"/>
+              <path d="M279 178L276 155" stroke="#9ee7ff" stroke-width="5" stroke-linecap="round"/>
+              <rect x="268" y="142" width="17" height="20" rx="7" fill="#0b1d2b" stroke="#9ee7ff" stroke-width="2"/>
+              <circle cx="276.5" cy="146" r="4" fill="#9ce8ff"/>
+
+              <!-- 7-inch display mounted on armrest -->
+              <path d="M399 184L409 152" stroke="#9ee7ff" stroke-width="5" stroke-linecap="round"/>
+              <g transform="translate(385 91) rotate(7 42 35)">
+                <rect x="-4" y="-4" width="91" height="72" rx="8" fill="#07131f" stroke="#a4eaff" stroke-width="2.4"/>
+                <rect x="2" y="2" width="79" height="60" rx="4" fill="url(#schematicScreen)" stroke="#4f91b7" stroke-width="1.2"/>
+                <path d="M8 14H75" stroke="#63dfff" stroke-width="2" opacity=".8"/>
+                <text x="10" y="11" fill="#bfefff" font-size="5.8" font-family="Arial,sans-serif" font-weight="700">ALLEY MOBILITY</text>
+                <rect x="10" y="22" width="26" height="16" rx="2" fill="#1e5874" stroke="#65c7e9" stroke-width=".8"/>
+                <path d="M23 25V34M18 30L23 25L28 30" fill="none" stroke="#b8f1ff" stroke-width="1.3"/>
+                <rect x="43" y="22" width="28" height="16" rx="2" fill="#183d55" stroke="#4b89aa" stroke-width=".8"/>
+                <circle cx="57" cy="30" r="5" fill="none" stroke="#a8eaff" stroke-width="1.1"/>
+                <path d="M10 45H70M10 52H54" stroke="#5485a3" stroke-width="2.5" stroke-linecap="round"/>
+                <circle cx="73" cy="55" r="2.3" fill="#63efb4"/>
+              </g>
+
+              <!-- Battery and motor housings -->
+              <path d="M291 344L359 326L419 345L354 369Z" fill="#102b3e" stroke="#8bdfff" stroke-width="2"/>
+              <path d="M311 345L359 333L398 345L351 359Z" fill="none" stroke="#5998ba" stroke-width="1.4" stroke-dasharray="4 3"/>
+              <path d="M328 339V349M336 337V347M344 335V345" stroke="#a6eaff" stroke-width="1.5"/>
+              <circle cx="226" cy="337" r="35" fill="none" stroke="#ffca75" stroke-width="1.7" stroke-dasharray="3 4"/>
+
+              <!-- Front fork, caster and footrest -->
+              <path d="M426 350L453 394L476 400" fill="none" stroke="#a6eaff" stroke-width="8" stroke-linecap="round"/>
+              <path d="M450 381L478 401" fill="none" stroke="#d1f5ff" stroke-width="2"/>
+              <circle cx="482" cy="411" r="28" fill="#07111b" stroke="#8edfff" stroke-width="2.5"/>
+              <circle cx="482" cy="411" r="17" fill="none" stroke="#5e9fbd" stroke-width="1.5"/>
+              <circle cx="482" cy="411" r="5" fill="#9ce8ff"/>
+              <path d="M399 280L452 320L468 350" fill="none" stroke="#9ee7ff" stroke-width="7" stroke-linecap="round"/>
+              <path d="M439 354L490 371L480 387L429 370Z" fill="#14334a" stroke="#93e2ff" stroke-width="2"/>
+
+              <!-- Technical callouts -->
+              <g fill="none" stroke="#69dfff" stroke-width="1.2" opacity=".9">
+                <path d="M463 107L512 76H650"/><circle cx="463" cy="107" r="3" fill="#69dfff"/>
+                <path d="M420 183L520 162H650"/><circle cx="420" cy="183" r="3" fill="#69dfff"/>
+                <path d="M276 147L184 111H55"/><circle cx="276" cy="147" r="3" fill="#69dfff"/>
+                <path d="M321 341L510 280H650"/><circle cx="321" cy="341" r="3" fill="#69dfff"/>
+                <path d="M226 337L117 420H40"/><circle cx="226" cy="337" r="3" fill="#ffca75"/>
+                <path d="M482 411L540 445H650"/><circle cx="482" cy="411" r="3" fill="#69dfff"/>
+                <path d="M300 227L155 251H40"/><circle cx="300" cy="227" r="3" fill="#69dfff"/>
+              </g>
+              <g font-family="ui-monospace,Menlo,monospace" font-size="9" letter-spacing=".6">
+                <text x="515" y="68" fill="#bdeeff">7-IN TOUCHSCREEN</text>
+                <text x="524" y="154" fill="#bdeeff">ARMREST</text>
+                <text x="48" y="103" fill="#bdeeff">JOYSTICK</text>
+                <text x="515" y="272" fill="#bdeeff">BATTERY / CONTROL</text>
+                <text x="42" y="434" fill="#ffcf87">REAR DRIVE WHEEL</text>
+                <text x="545" y="458" fill="#bdeeff">FRONT CASTER</text>
+                <text x="42" y="243" fill="#bdeeff">SEAT FRAME</text>
+              </g>
+
+              <!-- Scale line and diagram footer -->
+              <path d="M525 475H650M525 470V480M650 470V480" stroke="#648aa4" stroke-width="1.2"/>
+              <text x="587" y="466" text-anchor="middle" fill="#789bb4" font-size="8" font-family="ui-monospace,monospace">REFERENCE VIEW</text>
+            </svg>
+          </div>
+        </div>
+        <div class="visual-footer">
+          <div class="metric"><div class="metric-label">Command state</div><div class="metric-value" id="metricMotion">Idle</div></div>
+          <div class="metric"><div class="metric-label">Measured speed</div><div class="metric-value" id="metricSpeed">Not available</div></div>
+          <div class="metric"><div class="metric-label">Control source</div><div class="metric-value" id="metricSource">Manual</div></div>
+        </div>
+      </section>
+
+      <div class="right-col">
+        <section class="panel">
+          <div class="panel-head"><div class="panel-title">Command telemetry</div><div class="panel-kicker">NETWORK STATUS</div></div>
+          <div class="telemetry-body">
+            <div class="telemetry-item"><div class="telemetry-line"><span>Direction request</span><strong id="driveVal">STOP</strong></div><div class="bar"><span id="driveBar"></span></div></div>
+            <div class="telemetry-item"><div class="telemetry-line"><span>Steering request</span><strong id="steerVal">Center</strong></div><div class="bar"><span id="steerBar"></span></div></div>
+            <div class="telemetry-item"><div class="telemetry-line"><span>Battery display</span><strong>98%</strong></div><div class="bar"><span style="width:98%;background:linear-gradient(90deg,#42c990,#80f2ba)"></span></div></div>
+            <div class="telemetry-item"><div class="telemetry-line"><span>Jetson WebSocket</span><strong id="controllerLink" style="color:var(--amber)">Offline</strong></div><div class="bar"><span style="width:0%;background:var(--amber)"></span></div></div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head"><div class="panel-title">EEG interface</div><div class="panel-kicker">ROADMAP</div></div>
+          <div class="eeG-body">
+            <div class="future-label"><span>✦</span> Future integration</div>
+            <div class="eeg-title">Neural input layer</div>
+            <p class="eeg-copy">Planned pathway for translating validated EEG intent into a high-level movement request.</p>
+            <div class="pipeline">
+              <div class="pipe-node"><div class="pipe-icon">⌁</div><div class="pipe-name">EEG<br>headset</div></div><div class="pipe-arrow">›</div>
+              <div class="pipe-node"><div class="pipe-icon">⌘</div><div class="pipe-name">ESP32-S3<br>bridge</div></div><div class="pipe-arrow">›</div>
+              <div class="pipe-node"><div class="pipe-icon">▣</div><div class="pipe-name">Jetson<br>Orin Nano</div></div>
+            </div>
+            <div class="eeg-status"><span>Input stream</span><span class="status-off"><i class="dot amber"></i> Not connected</span></div>
+            <div class="mini-log"><span>EEG:</span> awaiting device handshake<br><span>INTENT:</span> no command received<br><span>DAC:</span> software profile only until Jetson output is armed</div>
+          </div>
+        </section>
+      </div>
+    </section>
+
+    <section class="console" aria-label="Debug console">
+      <div class="console-head">
+        <div class="console-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m4 17 6-5-6-5M12 19h8"/></svg> System debug console <span class="dot" style="width:5px;height:5px"></span></div>
+        <div class="console-tools"><span class="console-count" id="consoleCount">0 EVENTS</span><button class="clear-btn" id="clearConsole">Clear</button><button class="console-toggle" id="consoleToggle" aria-expanded="true">Hide console −</button></div>
+      </div>
+      <div class="console-content" id="consoleContent" aria-live="polite"></div>
+      <div class="console-prompt" id="consolePrompt"><span>mobility@alley:~$</span><span id="consolePromptText">Waiting for Jetson WebSocket connection</span></div>
+    </section>
+    <footer class="footer"><span><strong>ALLEY MOBILITY UI</strong> · Jetson secure LAN bridge · build 0.4.0</span><span>WSS + TOKEN AUTH · LAN ONLY · DAC OFF BY DEFAULT</span></footer>
+  </main>
+
+  <script>
+    (() => {
+      const $ = (id) => document.getElementById(id);
+      const state = {
+        direction: 'stop', source: 'Startup', events: 0, ws: null,
+        seq: 0, heartbeat: null, activePointer: null, browserHeldDirection: null, connected: false, authenticated: false, voltageMode: '3.3', voltageCap: 3.3
+      };
+      const dirs = {
+        forward: { label: 'Forward', arrow: '↑', steer: 'Center', steerPct: 50 },
+        backward: { label: 'Backward', arrow: '↓', steer: 'Center', steerPct: 50 },
+        left: { label: 'Turning left', arrow: '←', steer: 'Left', steerPct: 18 },
+        right: { label: 'Turning right', arrow: '→', steer: 'Right', steerPct: 82 },
+        stop: { label: 'Stopped', arrow: '●', steer: 'Center', steerPct: 50 }
+      };
+      const keys = { w: 'forward', ArrowUp: 'forward', s: 'backward', ArrowDown: 'backward', a: 'left', ArrowLeft: 'left', d: 'right', ArrowRight: 'right' };
+
+      function log(message, type = 'info') {
+        const row = document.createElement('div');
+        row.className = `log-row ${type}`;
+        const time = new Date().toLocaleTimeString('en-US', { hour12: false });
+        const timeEl = document.createElement('span'); timeEl.className = 'log-time'; timeEl.textContent = time;
+        const typeEl = document.createElement('span'); typeEl.className = 'log-type'; typeEl.textContent = type.toUpperCase();
+        const msgEl = document.createElement('span'); msgEl.textContent = message;
+        row.append(timeEl, typeEl, msgEl);
+        $('consoleContent').appendChild(row);
+        $('consoleContent').scrollTop = $('consoleContent').scrollHeight;
+        state.events++;
+        $('consoleCount').textContent = `${state.events} EVENT${state.events === 1 ? '' : 'S'}`;
+      }
+
+      function setConnection(connected, message) {
+        state.connected = connected;
+        $('jetsonChip').classList.toggle('online', connected);
+        $('jetsonChip').classList.toggle('offline', !connected);
+        $('jetsonDot').classList.toggle('amber', !connected);
+        $('jetsonStatus').textContent = connected ? 'Jetson connected' : 'Jetson offline';
+        $('connectBtn').textContent = connected ? 'Disconnect' : 'Connect';
+        $('controllerLink').textContent = connected ? 'Online' : 'Offline';
+        $('controllerLink').style.color = connected ? 'var(--green)' : 'var(--amber)';
+        $('connectHelp').textContent = message || (connected ? 'Authenticated secure WebSocket link established.' : 'Enter the Jetson .local hostname and private bridge token.');
+        $('consolePromptText').textContent = connected ? 'Connected to Jetson · waiting for commands' : 'Waiting for Jetson WebSocket connection';
+      }
+
+      function renderVoltageMap(mode, effectiveCap = null) {
+        const cap = Number(effectiveCap == null ? mode : effectiveCap);
+        const val = v => Math.min(v, cap).toFixed(1);
+        $('mapForward').textContent = `${val(5)} / ${val(1)} V`;
+        $('mapBackward').textContent = `${val(1)} / ${val(5)} V`;
+        $('mapLeft').textContent = `${val(5)} / ${val(5)} V`;
+        $('mapRight').textContent = `${val(1)} / ${val(1)} V`;
+        $('mapStop').textContent = '2.5 / 2.5 V';
+        $('voltageHelp').textContent = `${String(mode)} V mode selected · effective ceiling ${cap.toFixed(1)} V. Release requests 2.5 V on both axes. The DAC supply may impose this lower ceiling.`;
+      }
+
+      function applyVoltageModeUi(mode, effectiveCap = null, logChange = false) {
+        state.voltageMode = String(mode);
+        if (effectiveCap != null) state.voltageCap = Number(effectiveCap);
+        else state.voltageCap = Number(mode);
+        $('voltageMode').value = state.voltageMode;
+        renderVoltageMap(state.voltageMode, state.voltageCap);
+        if (logChange) log(`DAC output ceiling set to ${state.voltageMode} V mode`, 'success');
+      }
+
+      function sendVoltageMode(mode) {
+        if (!wsOpen()) {
+          log('Connect to the Jetson before changing the active voltage mode', 'warn');
+          applyVoltageModeUi(state.voltageMode);
+          return;
+        }
+        if (state.direction !== 'stop') {
+          log('Release the movement key and STOP before changing voltage mode', 'warn');
+          applyVoltageModeUi(state.voltageMode);
+          return;
+        }
+        try {
+          state.ws.send(JSON.stringify({ type: 'voltage_mode', mode: String(mode), source: 'dashboard' }));
+        } catch (err) {
+          log(`Voltage mode request failed: ${err.message}`, 'error');
+          applyVoltageModeUi(state.voltageMode);
+        }
+      }
+
+      function setDirection(direction, source = 'Dashboard') {
+        if (!dirs[direction]) return;
+        const d = dirs[direction];
+        const changed = state.direction !== direction || state.source !== source;
+        state.direction = direction;
+        state.source = source;
+        $('stateText').textContent = d.label;
+        $('stateArrow').textContent = d.arrow;
+        $('metricMotion').textContent = direction === 'stop' ? 'Idle' : d.label;
+        $('metricSource').textContent = source;
+        $('metricSpeed').textContent = 'Not available';
+        $('driveVal').textContent = direction.toUpperCase();
+        $('driveBar').style.width = direction === 'stop' ? '0%' : '100%';
+        $('steerVal').textContent = d.steer;
+        $('steerBar').style.width = `${d.steerPct}%`;
+        $('viewMode').textContent = direction === 'stop' ? 'Standby' : d.label;
+        $('chairWrap').classList.toggle('moving', direction !== 'stop');
+        $('chairWrap').style.transform = direction === 'left' ? 'rotateY(-9deg) rotateZ(-2deg)' : direction === 'right' ? 'rotateY(9deg) rotateZ(2deg)' : direction === 'backward' ? 'rotateZ(1deg)' : 'rotateZ(0deg)';
+        document.querySelectorAll('.dir-btn').forEach(btn => btn.classList.toggle('active', btn.dataset.dir === direction));
+        document.querySelectorAll('.direction-halo').forEach(el => el.classList.remove('show'));
+        if (direction !== 'stop') $('halo-' + direction).classList.add('show');
+        if (changed) log(`${source} → ${direction.toUpperCase()}`);
+      }
+
+      function wsOpen() { return state.ws && state.ws.readyState === WebSocket.OPEN && state.authenticated; }
+      function sendCommand(direction, source = 'browser') {
+        if (!wsOpen()) {
+          if (direction !== 'stop') log('Not connected to Jetson — command not sent', 'error');
+          setDirection('stop', 'Disconnected');
+          return false;
+        }
+        const message = { type: 'command', direction, source, seq: ++state.seq, sent_at: Date.now() };
+        try {
+          state.ws.send(JSON.stringify(message));
+          setDirection(direction, source === 'terminal' ? 'Jetson terminal' : 'Browser');
+          return true;
+        } catch (err) {
+          log(`Send failed: ${err.message}`, 'error');
+          return false;
+        }
+      }
+
+      function startHeartbeat() {
+        if (state.heartbeat) clearInterval(state.heartbeat);
+        state.heartbeat = setInterval(() => {
+          if (state.direction !== 'stop' && wsOpen()) {
+            const message = { type: 'command', direction: state.direction, source: 'browser', seq: ++state.seq, heartbeat: true, sent_at: Date.now() };
+            state.ws.send(JSON.stringify(message));
+          }
+        }, 140);
+      }
+
+      function stopCommand(source = 'browser') {
+        if (state.heartbeat) clearInterval(state.heartbeat);
+        state.heartbeat = null;
+        state.browserHeldDirection = null;
+        if (wsOpen()) sendCommand('stop', source);
+        else setDirection('stop', 'Disconnected');
+      }
+
+      function connect() {
+        if (state.ws && (state.ws.readyState === WebSocket.OPEN || state.ws.readyState === WebSocket.CONNECTING)) {
+          stopCommand('disconnect');
+          state.authenticated = false;
+          state.ws.close(1000, 'Operator disconnected');
+          return;
+        }
+        let host = $('jetsonHost').value.trim();
+        const token = $('bridgeToken').value.trim();
+        if (!host || /\s/.test(host)) {
+          log('Enter the Jetson .local hostname shown by the installer', 'error');
+          $('jetsonHost').focus();
+          return;
+        }
+        if (!token) {
+          log('Paste the private bridge token printed by the Jetson installer', 'error');
+          $('bridgeToken').focus();
+          return;
+        }
+        host = host.replace(/^wss?:\/\//i, '').replace(/^https?:\/\//i, '').replace(/\/.*$/, '').replace(/:\d+$/, '');
+        const url = `wss://${host}:8765`;
+        state.authenticated = false;
+        log(`Connecting securely to ${url}…`);
+        setConnection(false, `Opening TLS connection to ${host}:8765…`);
+        try {
+          const socket = new WebSocket(url);
+          state.ws = socket;
+          socket.onopen = () => {
+            log('TLS WebSocket established; waiting for Jetson authentication challenge…', 'success');
+          };
+          socket.onmessage = event => {
+            let data;
+            try { data = JSON.parse(event.data); } catch { log('Received malformed message from Jetson', 'error'); return; }
+            if (data.type === 'auth_required') {
+              try {
+                socket.send(JSON.stringify({ type: 'auth', token }));
+                log('Sending private LAN access token for authentication…');
+              } catch (err) {
+                log(`Could not send authentication token: ${err.message}`, 'error');
+                socket.close();
+              }
+            } else if (data.type === 'auth_ok') {
+              state.authenticated = true;
+              setConnection(true, `Authenticated TLS link to ${host}. Dashboard commands are available.`);
+              log('Jetson authenticated the dashboard over TLS', 'success');
+            } else if (data.type === 'auth_error') {
+              state.authenticated = false;
+              log(`Jetson rejected the token: ${data.message || 'authentication failed'}`, 'error');
+              setConnection(false, 'Authentication failed. Re-copy the current token from the Jetson.');
+            } else if (data.type === 'hello') {
+              if (data.voltage_mode) applyVoltageModeUi(data.voltage_mode, data.voltage_cap);
+              log(`Jetson bridge ready · watchdog ${data.watchdog_seconds}s · DAC output ${String(data.hardware_output).toUpperCase()}`, 'warn');
+              log(`Voltage profile ${data.voltage_mode || '3.3'} V · effective cap ${Number(data.voltage_cap || 0).toFixed(2)} V`);
+            } else if (data.type === 'mode_state') {
+              applyVoltageModeUi(data.voltage_mode, data.voltage_cap, true);
+              if (data.voltage_cap < Number(data.voltage_mode)) log(`DAC VDD limits output to ${Number(data.voltage_cap).toFixed(2)} V`, 'warn');
+            } else if (data.type === 'mode_ack') {
+              applyVoltageModeUi(data.voltage_mode, data.voltage_cap, true);
+            } else if (data.type === 'ack') {
+              $('consolePromptText').textContent = `Jetson acknowledged sequence ${data.seq} · ${String(data.direction).toUpperCase()}`;
+            } else if (data.type === 'terminal_command') {
+              setDirection(data.direction, 'Jetson terminal');
+              log(`Terminal key received from Jetson → ${String(data.direction).toUpperCase()}`);
+            } else if (data.type === 'state') {
+              setDirection(data.direction, data.source === 'watchdog_timeout' ? 'Safety timeout' : (data.source === 'browser' ? 'Browser' : (data.source || 'Jetson')));
+              if (data.origin === 'watchdog') log('Jetson watchdog set command state to STOP', 'warn');
+            } else if (data.type === 'error') {
+              applyVoltageModeUi(state.voltageMode, state.voltageCap);
+              log(`Jetson error: ${data.message}`, 'error');
+            }
+          };
+          socket.onerror = () => {
+            log('Secure WebSocket error — verify .local hostname, imported CA certificate, same Wi-Fi, firewall, and browser local-network permission', 'error');
+            setConnection(false, 'Connection failed. Check the Jetson bridge and local certificate setup.');
+          };
+          socket.onclose = event => {
+            if (state.heartbeat) clearInterval(state.heartbeat);
+            state.heartbeat = null;
+            state.authenticated = false;
+            setDirection('stop', 'Link closed');
+            setConnection(false, event.reason || 'Jetson connection closed.');
+            log(`Jetson link closed (code ${event.code})`, 'warn');
+          };
+        } catch (err) {
+          state.authenticated = false;
+          setConnection(false, err.message);
+          log(`Could not create secure WebSocket: ${err.message}`, 'error');
+        }
+      }
+
+      function beginDirection(direction) {
+        if (direction === 'stop') { stopCommand('browser'); return; }
+        if (sendCommand(direction, 'browser')) {
+          state.browserHeldDirection = direction;
+          startHeartbeat();
+        }
+      }
+
+      document.querySelectorAll('.dir-btn').forEach(btn => {
+        const direction = btn.dataset.dir;
+        btn.addEventListener('pointerdown', e => {
+          e.preventDefault();
+          if (direction === 'stop') { stopCommand('browser'); return; }
+          state.activePointer = e.pointerId;
+          try { btn.setPointerCapture(e.pointerId); } catch {}
+          beginDirection(direction);
+        });
+        const release = () => {
+          if (direction !== 'stop' && state.browserHeldDirection === direction) stopCommand('browser');
+          state.activePointer = null;
+        };
+        btn.addEventListener('pointerup', release);
+        btn.addEventListener('pointercancel', release);
+        btn.addEventListener('lostpointercapture', release);
+        btn.addEventListener('contextmenu', e => e.preventDefault());
+      });
+
+      window.addEventListener('keydown', e => {
+        if (e.repeat || e.target.matches('input,textarea,select')) return;
+        if (e.code === 'Space') { e.preventDefault(); stopCommand('browser'); return; }
+        const direction = keys[e.key] || keys[e.key.toLowerCase()];
+        if (direction) { e.preventDefault(); beginDirection(direction); }
+      });
+      window.addEventListener('keyup', e => {
+        const direction = keys[e.key] || keys[e.key.toLowerCase()];
+        if (direction && state.browserHeldDirection === direction) stopCommand('browser');
+      });
+      window.addEventListener('blur', () => {
+        if (state.browserHeldDirection) stopCommand('browser_blur');
+      });
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden && state.browserHeldDirection) stopCommand('page_hidden');
+      });
+      window.addEventListener('beforeunload', () => {
+        if (wsOpen() && state.browserHeldDirection) {
+          try { state.ws.send(JSON.stringify({ type: 'command', direction: 'stop', source: 'browser_unload', seq: ++state.seq })); } catch {}
+        }
+      });
+
+      $('connectBtn').addEventListener('click', connect);
+      $('voltageMode').addEventListener('change', e => sendVoltageMode(e.target.value));
+      applyVoltageModeUi('3.3');
+      $('jetsonHost').value = '';
+      $('bridgeToken').value = '';
+      $('bridgeToken').addEventListener('keydown', e => { if (e.key === 'Enter') connect(); });
+      $('jetsonHost').addEventListener('keydown', e => { if (e.key === 'Enter') connect(); });
+      $('stopBtn').addEventListener('click', () => stopCommand('browser_stop_button'));
+      $('resetBtn').addEventListener('click', () => {
+        stopCommand('browser_reset');
+        $('chairWrap').style.transform = 'rotateZ(0deg)';
+        log('View indicators reset; STOP sent to Jetson');
+      });
+
+      $('consoleToggle').addEventListener('click', () => {
+        const content = $('consoleContent');
+        const isHidden = !content.hidden;
+        content.hidden = isHidden;
+        $('consolePrompt').hidden = isHidden;
+        $('consoleToggle').textContent = isHidden ? 'Show console +' : 'Hide console −';
+        $('consoleToggle').setAttribute('aria-expanded', String(!isHidden));
+      });
+      $('clearConsole').addEventListener('click', () => {
+        $('consoleContent').replaceChildren(); state.events = 0;
+        $('consoleCount').textContent = '0 EVENTS';
+        log('Console cleared');
+      });
+      function tickClock() { $('clock').textContent = new Date().toLocaleTimeString('en-US', { hour12: false }); }
+      tickClock(); setInterval(tickClock, 1000);
+      setConnection(false, 'Publish this index.html on GitHub Pages. Start the Jetson LAN installer, import its CA certificate, then enter the printed .local hostname and token.');
+      log('ALLEY Mobility dashboard loaded');
+      log('Waiting for live WebSocket link to Jetson Orin Nano', 'warn');
+      log('WASD map loaded: FWD 5/1 · BACK 1/5 · LEFT 5/5 · RIGHT 1/1 · RELEASE 2.5/2.5 V');
+      log('MCP4725 hardware output remains disabled until separately armed on the Jetson', 'warn');
+      setDirection('stop', 'Startup');
+    })();
+  </script>
+</body>
+</html>
