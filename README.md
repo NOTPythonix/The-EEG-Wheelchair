@@ -6,7 +6,7 @@ What We Did So Far:
 
 . Tested MCP4725 voltage detection.
 
-. Bought All EEG Wheelchair Components.
+. Bought Most EEG Wheelchair Components.
 
 . Inspected Wheelchair main PCB board.
 
@@ -14,6 +14,10 @@ What We Did So Far:
 
 . Testing egg data reading.
 
-. Might Not be using SVEEP for moving the Wheelchair
+. Might Not be using SVEEP for moving the Wheelchair.
 
-. Made the Final HTML and python code for Jetson Orin Nano EEG Wheelchair Project! (We need to add the functions later)
+. Made The Web UI.
+
+. fixed 5V Jetson Voltage Issue.
+
+. Finished MCP4725 Setup.
