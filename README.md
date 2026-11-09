@@ -21,3 +21,5 @@ What We Did So Far:
 . fixed 5V Jetson Voltage Issue.
 
 . Finished MCP4725 Setup.
+
+. EEG Code still in progress
