@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Model weights and datasets (too large for GitHub)
+*.pth
+*.pkl
+
+# Runtime recordings and app state
+recordings/
+model/knight_monitor/channels.json
+model/knight_monitor/markers.json
+
+# Freebuff's local project folder
+/.freebuff/
