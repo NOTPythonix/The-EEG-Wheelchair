@@ -61,7 +61,6 @@ MONO_FONT = "Consolas"
 
 TRACE_COLORS = ["#63b3ff", "#6ee7b7", "#fbbf24", "#fb923c",
                 "#f87171", "#c084fc", "#22d3ee", "#9aa8b6"]
-IMU_COLORS = ["#63b3ff", "#6ee7b7", "#fbbf24"]
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 RECORD_DIR = os.path.join(SCRIPT_DIR, "recordings")
@@ -117,6 +116,17 @@ def nice_range(value: float) -> float:
     return float(int(value / 1000 + 1) * 1000)
 
 
+def axis_ceiling(value: float) -> float:
+    """Round a linear axis top up to 1, 2, 2.5 or 5 x 10^n."""
+    if not np.isfinite(value) or value <= 0:
+        return 1.0
+    base = 10.0 ** np.floor(np.log10(float(value)))
+    for mult in (1.0, 2.0, 2.5, 5.0):
+        if value <= mult * base:
+            return mult * base
+    return 10.0 * base
+
+
 def channel_name(labels, ch):
     lab = (labels[ch] if ch < len(labels) else "") or ""
     return lab.strip() or f"ch{ch + 1}"
@@ -126,12 +136,21 @@ def channel_name(labels, ch):
 # serial link
 # --------------------------------------------------------------------------
 
+WATCHDOG_FIRST = 7.0     # no frame after (re)open -> reopen the port
+WATCHDOG_IDLE = 4.0      # no byte while a stream is established -> reopen
+MAX_REOPENS = 3          # consecutive reopens before giving up on the port
+REOPEN_SETTLE = 3.0      # wait before reopening, so the board finishes booting
+RLD_SETTLE = 1.0         # written RLD command -> call it applied (no ACK exists)
+
+
 class SerialWorker(QtCore.QThread):
     """Owns the port.  Reads bytes, emits frames into a deque, and applies a
     queue of board commands with the pauses the firmware needs."""
 
     connected_ok = QtCore.Signal(str)
+    recovered = QtCore.Signal(str)
     failed = QtCore.Signal(str)
+    command_sent = QtCore.Signal(object)     # the tag of a command just written
 
     def __init__(self, port: str, mode: str = "auto", mirror: str = "",
                  parent=None):
@@ -147,10 +166,15 @@ class SerialWorker(QtCore.QThread):
         self._commands = queue.Queue()
         self._stopping = False
         self._frame_times = collections.deque(maxlen=400)
+        self.ready = False       # True once frames have parsed since (re)open
 
     # -- commands ----------------------------------------------------------
-    def send_command(self, text: str, delay_after: float = 0.6) -> None:
-        self._commands.put((text, delay_after))
+    def send_command(self, text: str, delay_after: float = 0.6,
+                     tag=None) -> None:
+        """Queue a board command.  `tag` comes back on the command_sent signal
+        once the bytes have actually been written, so the UI can tell "queued"
+        from "the board has had it"."""
+        self._commands.put((text, delay_after, tag))
 
     def queued_commands(self) -> int:
         return self._commands.qsize()
@@ -159,11 +183,29 @@ class SerialWorker(QtCore.QThread):
         self._stopping = True
 
     # -- thread body -------------------------------------------------------
+    def _open_port(self):
+        """Open the board port and drop whatever the driver buffered while it
+        was closed.
+
+        Opening it twice in quick succession is NOT a fix: the second reset
+        lands while the board is still booting and can wedge the firmware
+        (measured: banner truncated, then silence for minutes).  A stale first
+        open that delivers nothing is handled by the watchdog below, which
+        reopens after the board has had time to settle.
+        """
+        ser = serial.Serial(self.port, kp.BAUD, timeout=0.02,
+                            write_timeout=0.25)
+        try:
+            ser.reset_input_buffer()
+        except Exception:
+            pass
+        return ser
+
     def run(self) -> None:
         ser = None
         mir = None
         try:
-            ser = serial.Serial(self.port, kp.BAUD, timeout=0.02, write_timeout=0.25)
+            ser = self._open_port()
         except Exception as exc:
             self.failed.emit(f"Could not open {self.port}.\n\n{exc}\n\n"
                              "Another program may already hold the port.")
@@ -182,10 +224,18 @@ class SerialWorker(QtCore.QThread):
         parser = kp.FrameParser(self.mode)
         prev = None
         gaps = repeats = dropped = total = 0
-        # the firmware silently drops commands for ~2 s after a stream starts
-        next_command = time.monotonic() + 2.2
+        # Opening the port resets the board: counters restart at 0 and the first
+        # frame arrives ~2.8 s later (measured, but the IMU scan can take
+        # longer).  Commands sent into the boot are lost, so hold them until
+        # frames actually parse, and keep a minimum spacing after that.
+        next_command = time.monotonic() + 3.2
         last_frame = 0.0
         stats_at = time.monotonic()
+        last_data = time.monotonic()
+        opened_at = last_data
+        frames_seen = False
+        reopen_attempts = 0
+        pending_recovery = None
 
         self.frame_length = parser.frame_length
         self.connected_ok.emit(
@@ -195,11 +245,75 @@ class SerialWorker(QtCore.QThread):
         while not self._stopping:
             now = time.monotonic()
 
-            # board commands, spaced out
-            if now >= next_command and not self._commands.empty():
-                text, delay = self._commands.get()
+            # Dead-stream watchdog.  A port opened against a stale FTDI state can
+            # latch a handle that never delivers a byte, and nothing else in the
+            # loop notices: py-spy shows the thread parked in Serial.read while
+            # the board streams happily.  Close and reopen it (the manual fix),
+            # drop commands queued for the dead stream, and tell the UI so it can
+            # re-send the channel setup the board's reset wiped out.
+            # Before the first frame, time since the open counts even if bytes
+            # arrive: the overflow case delivers a flood of garbage at 163 KB/s
+            # that never parses into a frame and keeps last_data fresh.
+            if frames_seen:
+                stalled = now - last_data > WATCHDOG_IDLE
+                limit = WATCHDOG_IDLE
+            else:
+                stalled = now - opened_at > WATCHDOG_FIRST
+                limit = WATCHDOG_FIRST
+            if stalled:
+                reopen_attempts += 1
+                if reopen_attempts > MAX_REOPENS:
+                    self.failed.emit(
+                        f"{self.port} stopped sending data and reopening it did not "
+                        f"help ({reopen_attempts - 1} attempts).\n\n"
+                        "Check the board's USB cable and that the headset is powered.")
+                    break
+                try:
+                    ser.close()
+                except Exception:
+                    pass
+                while True:
+                    try:
+                        self._commands.get_nowait()
+                    except queue.Empty:
+                        break
+                # Wait long enough for the board to finish the reset its last
+                # open caused: resetting it again mid-boot wedges the firmware.
+                settle = time.monotonic() + REOPEN_SETTLE
+                while not self._stopping and time.monotonic() < settle:
+                    time.sleep(0.05)
+                if self._stopping:
+                    break
+                try:
+                    ser = self._open_port()
+                except Exception as exc:
+                    self.failed.emit(
+                        f"Lost {self.port} and could not reopen it.\n\n{exc}")
+                    break
+                parser = kp.FrameParser(self.mode)
+                prev = None
+                self.frame_length = parser.frame_length
+                last_frame = 0.0
+                last_data = time.monotonic()
+                opened_at = last_data
+                frames_seen = False
+                self.ready = False
+                next_command = time.monotonic() + 3.2
+                # Don't claim success yet: only tell the UI once a frame has
+                # parsed on the new handle.  A reopen that stays silent must end
+                # in `failed`, not in a cheerful "recovered".
+                pending_recovery = (
+                    f"{self.port} reopened after {limit:g} s without data")
+                continue
+
+            # board commands, spaced out; only once frames are actually arriving,
+            # because the board ignores commands while it boots
+            if frames_seen and now >= next_command and not self._commands.empty():
+                text, delay, tag = self._commands.get()
                 try:
                     ser.write(text.encode("ascii"))
+                    if tag is not None:
+                        self.command_sent.emit(tag)
                 except Exception:
                     pass
                 next_command = time.monotonic() + delay
@@ -214,12 +328,21 @@ class SerialWorker(QtCore.QThread):
                 break
 
             if chunk:
+                last_data = now
                 if mir is not None:
                     try:
                         mir.write(chunk)          # exact bytes, no re-encoding
                     except Exception:
                         pass
-                for fr in parser.feed(chunk):
+                parsed = parser.feed(chunk)
+                if parsed and not frames_seen:
+                    frames_seen = True
+                    self.ready = True
+                    reopen_attempts = 0
+                    if pending_recovery:
+                        self.recovered.emit(pending_recovery)
+                        pending_recovery = None
+                for fr in parsed:
                     total += 1
                     dropped += parser.dropped
                     parser.dropped = 0
@@ -268,6 +391,7 @@ class SerialWorker(QtCore.QThread):
                 }
 
         self.stats = dict(self.stats, running=False)
+        self.ready = False
         for s in (ser, mir):
             try:
                 if s is not None:
@@ -326,7 +450,13 @@ class Combo(QtWidgets.QComboBox):
 
 
 class Chip(QtWidgets.QAbstractButton):
-    """Small checkable pill: 'on', 'rld'.  No stock checkbox look."""
+    """Small checkable pill: 'on', 'rld'.  No stock checkbox look.
+
+    A chip can be *pending*: the user has asked for that state but the board
+    has not confirmed it yet.  Pending chips are drawn as a dashed outline
+    rather than a filled pill, so a lit chip always means "the board is really
+    doing this", never "the app asked for it".
+    """
 
     def __init__(self, text, parent=None):
         super().__init__(parent)
@@ -341,9 +471,19 @@ class Chip(QtWidgets.QAbstractButton):
         self.setFixedHeight(20)
         self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Fixed,
                            QtWidgets.QSizePolicy.Policy.Fixed)
+        self._pending = False
 
     def sizeHint(self):
         return QtCore.QSize(self.fontMetrics().horizontalAdvance(self.text()) + 15, 20)
+
+    def set_pending(self, pending):
+        pending = bool(pending)
+        if pending != self._pending:
+            self._pending = pending
+            self.update()
+
+    def is_pending(self):
+        return self._pending
 
     def enterEvent(self, event):
         self.update()
@@ -357,14 +497,34 @@ class Chip(QtWidgets.QAbstractButton):
         p = QtGui.QPainter(self)
         p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
         r = QtCore.QRectF(0.5, 0.5, self.width() - 1, self.height() - 1)
-        if self.isChecked():
-            p.setPen(QtGui.QPen(QtGui.QColor(ACCENT), 1))
-            p.setBrush(QtGui.QColor(ACCENT))
+        accent = QtGui.QColor(ACCENT)
+        if self._pending:
+            # asked for, not confirmed: outline only
+            pen = QtGui.QPen(accent, 1, QtCore.Qt.PenStyle.DashLine)
+            pen.setDashPattern([2.0, 2.0])
+            p.setPen(pen)
+            p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+            colour = MUTED
+        elif self.isChecked() and self.isEnabled():
+            p.setPen(QtGui.QPen(accent, 1))
+            p.setBrush(accent)
+            colour = "#ffffff"
+        elif self.isChecked():
+            # set, but the board is not there to do it
+            faded = QtGui.QColor(accent)
+            faded.setAlpha(70)
+            edge = QtGui.QColor(accent)
+            edge.setAlpha(120)
+            p.setPen(QtGui.QPen(edge, 1))
+            p.setBrush(faded)
+            colour = DIM
         else:
             p.setPen(QtGui.QPen(QtGui.QColor(LINE), 1))
-            p.setBrush(QtGui.QColor(PANEL_3 if self.underMouse() else PANEL_2))
+            p.setBrush(QtGui.QColor(PANEL_3 if self.underMouse() and self.isEnabled()
+                                    else PANEL_2))
+            colour = DIM if self.isEnabled() else MUTED
         p.drawRoundedRect(r, 4, 4)
-        p.setPen(QtGui.QColor("#ffffff") if self.isChecked() else QtGui.QColor(DIM))
+        p.setPen(QtGui.QColor(colour))
         p.drawText(self.rect(), QtCore.Qt.AlignmentFlag.AlignCenter, self.text())
 
 
@@ -540,16 +700,23 @@ class LanesView(QtWidgets.QWidget):
 
 
 class SpectrumView(QtWidgets.QWidget):
-    """Welch PSD of the visible window, 0-62.5 Hz."""
+    """Mean-channel Welch spectrum, linear, 0-63 Hz.
+
+    Mirrors the Visualizer: one curve per update, the last three results kept
+    and redrawn, with the older ones dimmed toward grey.
+    """
+
+    OLD_RGB = (0x46, 0x53, 0x62)     # oldest curve
+    NEW_RGB = (0xe6, 0xed, 0xf3)     # newest curve
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setMinimumHeight(130)
-        self.items = []            # (color, label, freqs, psd_db)
-        self.fmax = 62.5
+        self.items = []            # (freqs, psd) oldest first
+        self.fmax = 63.0
 
     def set_items(self, items):
-        self.items = items
+        self.items = list(items)
         self.update()
 
     def paintEvent(self, event):
@@ -563,26 +730,28 @@ class SpectrumView(QtWidgets.QWidget):
         f.setLetterSpacing(QtGui.QFont.SpacingType.AbsoluteSpacing, 1.0)
         p.setFont(f)
         p.setPen(QtGui.QColor(MUTED))
-        p.drawText(10, 14, "SPECTRUM  ·  WELCH 128-PT BLACKMAN-HARRIS  ·  dB RE MAX")
+        p.drawText(10, 14, "SPECTRUM  ·  MEAN OF ACTIVE CHANNELS  ·  "
+                           "WELCH 128-PT  ·  LINEAR µV²/Hz")
 
-        if not self.items:
+        curves = [(fr, psd) for fr, psd in self.items if fr.size >= 2]
+        if not curves:
             return
 
         left, right, top, bottom = 40, self.width() - 10, 24, self.height() - 20
         if right <= left or bottom <= top:
             return
 
-        allv = np.concatenate([it[3] for it in self.items if it[3].size])
-        if allv.size == 0:
-            return
-        hi = float(np.max(allv))
-        lo = max(hi - 55.0, float(np.min(allv)))
+        peak = 0.0
+        for _fr, psd in curves:
+            if psd.size:
+                peak = max(peak, float(np.max(psd)))
+        hi = axis_ceiling(peak)
 
         def xmap(fr):
-            return left + (right - left) * (fr / self.fmax)
+            return left + (right - left) * min(float(fr) / self.fmax, 1.0)
 
         def ymap(v):
-            return bottom - (bottom - top) * ((v - lo) / max(hi - lo, 1e-9))
+            return bottom - (bottom - top) * min(float(v) / hi, 1.0)
 
         tf = p.font()
         tf.setPointSizeF(7.4)
@@ -596,24 +765,40 @@ class SpectrumView(QtWidgets.QWidget):
             p.setPen(QtGui.QColor(MUTED))
             p.drawText(QtCore.QRectF(xmap(fr) - 12, bottom + 3, 24, 14),
                        QtCore.Qt.AlignmentFlag.AlignHCenter, str(fr))
-        for db in (0, -20, -40):
-            y = ymap(hi + db)
+        for frac in (0.0, 0.5, 1.0):
+            y = ymap(frac * hi)
             p.setPen(QtGui.QPen(QtGui.QColor(LINE_SOFT), 1))
             p.drawLine(QtCore.QPointF(left, y), QtCore.QPointF(right, y))
             p.setPen(QtGui.QColor(MUTED))
             p.drawText(QtCore.QRectF(4, y - 7, 32, 14),
-                       QtCore.Qt.AlignmentFlag.AlignRight, f"{db}")
+                       QtCore.Qt.AlignmentFlag.AlignRight, _tick_label(frac * hi))
         p.setPen(QtGui.QColor(MUTED))
         p.drawText(QtCore.QRectF(right - 18, bottom + 3, 18, 14), "Hz")
 
-        for color, label, freqs, psd in self.items:
-            if freqs.size < 2:
-                continue
+        n = len(curves)
+        for i, (freqs, psd) in enumerate(curves):
+            t = 1.0 if n == 1 else i / (n - 1)
+            color = QtGui.QColor(*[
+                int(round(a + (b - a) * t))
+                for a, b in zip(self.OLD_RGB, self.NEW_RGB)])
             pts = QtGui.QPolygonF()
             for fr, v in zip(freqs, psd):
+                if fr > self.fmax:
+                    break
                 pts.append(QtCore.QPointF(xmap(fr), ymap(float(v))))
-            p.setPen(QtGui.QPen(QtGui.QColor(color), 1.0))
+            p.setPen(QtGui.QPen(color, 1.0))
             p.drawPolyline(pts)
+
+
+def _tick_label(value: float) -> str:
+    """Compact axis label: 0, 2.5k, 130k, 1.2M."""
+    if value <= 0:
+        return "0"
+    for cut, suffix in ((1e9, "G"), (1e6, "M"), (1e3, "k")):
+        if value >= cut:
+            scaled = value / cut
+            return (f"{scaled:.1f}".rstrip("0").rstrip(".") + suffix)
+    return f"{value:.0f}"
 
 
 # --------------------------------------------------------------------------
@@ -745,40 +930,267 @@ class MarkerDialog(QtWidgets.QDialog):
         return out
 
 
+CUBE_VERTS = np.array([
+    [-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1],
+    [-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1],
+], dtype=float)
+CUBE_FACES = ((0, 1, 2, 3), (4, 5, 6, 7), (0, 1, 5, 4),
+              (2, 3, 7, 6), (0, 3, 7, 4), (1, 2, 6, 5))
+CUBE_EDGES = ((0, 1), (1, 2), (2, 3), (3, 0), (4, 5), (5, 6), (6, 7), (7, 4),
+              (0, 4), (1, 5), (2, 6), (3, 7))
+
+
+def _qmul(a, b):
+    w1, x1, y1, z1 = a
+    w2, x2, y2, z2 = b
+    return np.array([
+        w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
+        w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
+        w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
+        w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
+    ])
+
+
+def _q_to_matrix(q):
+    w, x, y, z = q
+    return np.array([
+        [1 - 2 * (y * y + z * z), 2 * (x * y - w * z), 2 * (x * z + w * y)],
+        [2 * (x * y + w * z), 1 - 2 * (x * x + z * z), 2 * (y * z - w * x)],
+        [2 * (x * z - w * y), 2 * (y * z + w * x), 1 - 2 * (x * x + y * y)],
+    ])
+
+
+class ImuCube(QtWidgets.QWidget):
+    """A box that turns with the headset: gyro integrated, levelled by gravity.
+
+    The first half second after (re)starting is used as "level", so whichever
+    way the board happens to be mounted is straight ahead.  The magnetometer is
+    not fused, so yaw drifts slowly; "Level" re-zeroes it.
+    """
+
+    CALIB_SAMPLES = 50
+    GRAVITY_GAIN = 2.0
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMinimumSize(340, 300)
+        self.q = np.array([1.0, 0.0, 0.0, 0.0])
+        self.ref_up = None            # body-frame gravity at "level"
+        self.ref_g = 1.0
+        self._calib = []
+        self._calib_mag = []
+        self._seen = False
+        self.roll = self.pitch = self.yaw = 0.0
+        self.readout = ""
+
+    # -- input -------------------------------------------------------------
+    def level(self):
+        """Treat the current pose as level and recalibrate."""
+        self.q = np.array([1.0, 0.0, 0.0, 0.0])
+        self.ref_up = None
+        self._calib = []
+        self._calib_mag = []
+        self.roll = self.pitch = self.yaw = 0.0
+        self.readout = ""
+        self.update()
+
+    def push(self, values):
+        a = np.asarray(values[:3], dtype=float)
+        g = np.asarray(values[3:6], dtype=float)
+        if not (np.all(np.isfinite(a)) and np.all(np.isfinite(g))):
+            return
+        mag_a = float(np.linalg.norm(a))
+        if mag_a < 1e-9:
+            return
+        a_n = a / mag_a
+        self._seen = True
+
+        if self.ref_up is None:
+            self._calib.append(a_n)
+            self._calib_mag.append(mag_a)
+            if len(self._calib) >= self.CALIB_SAMPLES:
+                ref = np.mean(self._calib, axis=0)
+                length = float(np.linalg.norm(ref))
+                if length > 1e-6:
+                    self.ref_up = ref / length
+                    self.ref_g = float(np.mean(self._calib_mag))
+                self._calib = []
+                self._calib_mag = []
+            self.update()
+            return
+
+        dt = 1.0 / kp.SAMPLE_RATE
+        speed = float(np.linalg.norm(g))
+        if speed > 1e-9:
+            q = self.q + 0.5 * dt * _qmul(
+                self.q, np.array([0.0, g[0], g[1], g[2]]))
+            self.q = q / np.linalg.norm(q)
+
+        # Gravity only corrects tilt while the measured magnitude is close to
+        # rest: a shove reads several m/s² and would otherwise drag the box.
+        if abs(mag_a - self.ref_g) < 0.25 * max(self.ref_g, 1e-6):
+            up = _q_to_matrix(self.q).T @ self.ref_up
+            err = np.cross(a_n, up)
+            size = float(np.linalg.norm(err))
+            if size > 0.5:
+                err *= 0.5 / size
+            q = self.q + 0.5 * dt * self.GRAVITY_GAIN * _qmul(
+                self.q, np.array([0.0, err[0], err[1], err[2]]))
+            self.q = q / np.linalg.norm(q)
+
+        self.roll, self.pitch, self.yaw = self._angles()
+        self.readout = "roll %+6.1f°   pitch %+6.1f°   yaw %+6.1f°" % (
+            self.roll, self.pitch, self.yaw)
+        self.update()
+
+    def _angles(self):
+        r = _q_to_matrix(self.q)
+        pitch = np.degrees(np.arcsin(np.clip(-r[2, 0], -1.0, 1.0)))
+        roll = np.degrees(np.arctan2(r[2, 1], r[2, 2]))
+        yaw = np.degrees(np.arctan2(r[1, 0], r[0, 0]))
+        return float(roll), float(pitch), float(yaw)
+
+    # -- drawing -----------------------------------------------------------
+    def paintEvent(self, event):
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+        p.fillRect(self.rect(), QtGui.QColor(BG))
+
+        w, h = self.width(), self.height()
+        cx, cy = w * 0.5, h * 0.55
+        scale = min(w, h) * 0.235
+        dist, focal = 4.2, 3.0
+
+        # Fixed three-quarter camera: a head-on cube would just be a square, and
+        # pitch would be invisible.
+        view_yaw, view_pitch = np.radians(-26.0), np.radians(16.0)
+        cyw, syw = np.cos(view_yaw), np.sin(view_yaw)
+        cxp, sxp = np.cos(view_pitch), np.sin(view_pitch)
+        view = (np.array([[cyw, 0, syw], [0, 1, 0], [-syw, 0, cyw]])
+                @ np.array([[1, 0, 0], [0, cxp, -sxp], [0, sxp, cxp]]))
+
+        def to_screen(v):
+            k = scale * focal / max(dist - v[2], 0.4)
+            return QtCore.QPointF(cx + v[0] * k, cy - v[1] * k)
+
+        def project(point):
+            return to_screen(view @ point)
+
+        # fixed ground plane, so tilt is readable against something
+        p.setPen(QtGui.QPen(QtGui.QColor("#151d28"), 1))
+        for i in range(-3, 4):
+            p.drawLine(project(np.array([i, -1.9, -3.0])),
+                       project(np.array([i, -1.9, 3.0])))
+            p.drawLine(project(np.array([-3.0, -1.9, i])),
+                       project(np.array([3.0, -1.9, i])))
+
+        rot = _q_to_matrix(self.q)
+        verts = (view @ rot @ CUBE_VERTS.T).T
+        cam = np.array([0.0, 0.0, dist])
+        light = np.array([0.35, 0.8, 0.5])
+        light /= np.linalg.norm(light)
+
+        visible = []
+        for idx in CUBE_FACES:
+            quad = verts[list(idx)]
+            normal = np.cross(quad[1] - quad[0], quad[2] - quad[0])
+            length = float(np.linalg.norm(normal))
+            if length < 1e-9:
+                continue
+            normal /= length
+            centroid = quad.mean(axis=0)
+            if float(normal @ centroid) < 0:
+                normal = -normal
+            if float(normal @ (cam - centroid)) <= 0:
+                continue
+            visible.append((float(centroid[2]), quad, normal, idx))
+        visible.sort(key=lambda item: item[0])
+
+        shown = set()
+        for _depth, _quad, _normal, idx in visible:
+            for a, b in zip(idx, idx[1:] + idx[:1]):
+                shown.add((min(a, b), max(a, b)))
+
+        p.setPen(QtGui.QPen(QtGui.QColor("#1b2532"), 1))
+        for a, b in CUBE_EDGES:
+            if (min(a, b), max(a, b)) not in shown:
+                p.drawLine(to_screen(verts[a]), to_screen(verts[b]))
+
+        for _depth, quad, normal, _idx in visible:
+            shade = 0.45 + 0.55 * max(0.0, float(normal @ light))
+            axis = int(np.argmax(np.abs(normal)))
+            base = ((30, 42, 56), (36, 54, 74), (44, 82, 120))[axis]
+            p.setBrush(QtGui.QColor(*[min(255, int(c * shade)) for c in base]))
+            p.setPen(QtCore.Qt.PenStyle.NoPen)
+            p.drawPolygon(QtGui.QPolygonF([to_screen(v) for v in quad]))
+
+        p.setPen(QtGui.QPen(QtGui.QColor("#8fb6dd"), 1.2))
+        for a, b in CUBE_EDGES:
+            if (min(a, b), max(a, b)) in shown:
+                p.drawLine(to_screen(verts[a]), to_screen(verts[b]))
+
+        font = p.font()
+        font.setPointSizeF(7.4)
+        font.setBold(True)
+        font.setLetterSpacing(QtGui.QFont.SpacingType.AbsoluteSpacing, 1.0)
+        p.setFont(font)
+        p.setPen(QtGui.QColor(MUTED))
+        p.drawText(10, 16, "ORIENTATION")
+
+        if self.readout:
+            font.setBold(False)
+            font.setLetterSpacing(QtGui.QFont.SpacingType.AbsoluteSpacing, 0)
+            font.setFamily(MONO_FONT)
+            font.setPointSizeF(8.2)
+            p.setFont(font)
+            p.setPen(QtGui.QColor(DIM))
+            p.drawText(QtCore.QRectF(0, 6, w - 10, 18),
+                       QtCore.Qt.AlignmentFlag.AlignRight, self.readout)
+
+        if self.ref_up is None:
+            font.setFamily(UI_FONT)
+            font.setPointSizeF(8.6)
+            font.setBold(False)
+            p.setFont(font)
+            p.setPen(QtGui.QColor(MUTED))
+            p.drawText(QtCore.QRectF(0, h - 26, w, 18),
+                       QtCore.Qt.AlignmentFlag.AlignHCenter,
+                       "hold still — levelling" if self._seen
+                       else "waiting for IMU frames")
+
+
 class ImuWindow(QtWidgets.QWidget):
-    """Accelerometer / gyroscope / magnetometer, three lanes of three axes."""
+    """Orientation box; the charts it used to show are gone."""
 
     def __init__(self):
         super().__init__()
         self.setWindowTitle("IMU Viewer")
         self.setWindowIcon(app_icon())
-        self.resize(860, 520)
-        self.view = LanesView()
+        self.resize(720, 560)
+
+        self.cube = ImuCube()
+        hint = QtWidgets.QLabel("gyro + gravity  ·  yaw drifts  ·  Level re-zeroes")
+        hint.setStyleSheet(f"color:{MUTED}; font-size:11px")
+        level = QtWidgets.QPushButton("Level")
+        level.setFixedHeight(26)
+        level.setToolTip("Treat the current pose as level")
+        level.clicked.connect(self.cube.level)
+
+        row = QtWidgets.QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(hint, 1)
+        row.addWidget(level)
+
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(10, 10, 10, 10)
-        layout.addWidget(self.view)
-        self._buf = collections.deque(maxlen=2000)
+        layout.addWidget(self.cube, 1)
+        layout.addLayout(row)
 
     def push(self, values):
-        self._buf.append(values)
+        self.cube.push(values)
 
-    def refresh(self, span):
-        arr = np.array(self._buf, dtype=float)
-        if arr.size == 0:
-            self.view.set_lanes([], span)
-            return
-        n = max(1, int(span * kp.SAMPLE_RATE))
-        arr = arr[-n:]
-        groups = [("accel", 0, "g"), ("gyro", 3, "rad/s"), ("mag", 6, "uT")]
-        lanes = []
-        for name, off, unit in groups:
-            lanes.append({
-                "label": name,
-                "sub": unit,
-                "visible": True,
-                "curves": [(IMU_COLORS[i], arr[:, off + i]) for i in range(3)],
-            })
-        self.view.set_lanes(lanes, span)
+    def refresh(self, span=None):
+        self.cube.update()
 
 
 class ReplayWindow(QtWidgets.QWidget):
@@ -933,6 +1345,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.worker = None
         self.connected = False
         self.history = collections.deque(maxlen=6000)    # (counter, counts, imu)
+        self._fft_history = collections.deque(maxlen=3)  # (freqs, psd), like the Visualizer
         self.markers = self._load_markers()
         self.channel_labels = self._load_channels()
         self.live_markers = []                            # (t, label)
@@ -942,6 +1355,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self._replay_window = None
         self._rec_dirty = False
         self._apply_dirty = False
+        self._setup_pending = 0
+        self._setup_total = 0
+
+        # What the board is doing, as far as the data can tell us.  A chip is
+        # only lit when the state it shows has been confirmed, never merely
+        # because a command was queued.
+        self._ch_recent = [collections.deque(maxlen=25) for _ in range(8)]
+        self._ch_on = [False] * 8
+        self._ch_gain_ok = [None] * 8   # gain the board was last told, per channel
+        self._rld_ok = [False] * 8
+        self._rld_sent = [None] * 8     # (state, monotonic time) once written
 
         self.rec = None
         self._build_ui()
@@ -1148,25 +1572,20 @@ class MainWindow(QtWidgets.QMainWindow):
                                 (2, "GAIN", QtCore.Qt.AlignmentFlag.AlignHCenter),
                                 (3, "RLD", QtCore.Qt.AlignmentFlag.AlignHCenter)):
             lab = dim_label(txt, 7.0)
-            if col == 1:
-                lab.setContentsMargins(12, 0, 0, 0)
             lab.setAlignment(align)
             rows.addWidget(lab, 0, col)
         self.ch_active = []
         self.ch_label = []
         self.ch_rld = []
         self.ch_gain = []
-        self.ch_status = []
         for ch in range(1, 9):
             r = ch                      # header occupies row 0
-            dot = QtWidgets.QLabel("")
-            dot.setFixedSize(7, 7)
-            dot.setStyleSheet(f"background:{MUTED}; border-radius:3px;")
-            dot.setToolTip("Green: live  ·  red: all zeros  ·  grey: disabled")
 
             active = Chip("on")
             active.setChecked(True)
-            active.setToolTip(f"Enable channel {ch} on the board")
+            active.setToolTip(
+                f"Enable channel {ch} on the board.\n"
+                "Lit only once the board is really sending this channel.")
             active.toggled.connect(self._apply_later)
 
             label = QtWidgets.QLineEdit(self.channel_labels[ch - 1])
@@ -1185,17 +1604,15 @@ class MainWindow(QtWidgets.QMainWindow):
             gains.currentTextChanged.connect(self._apply_later)
 
             rld = Chip("rld")
-            rld.setToolTip(f"Add channel {ch} to the RLD reference")
+            rld.setChecked(True)
+            rld.setToolTip(
+                f"Add channel {ch} to the RLD reference.\n"
+                "The firmware has no query, so this lights up once the command "
+                "has been sent and had time to take effect.")
             rld.toggled.connect(self._apply_later)
 
-            cell = QtWidgets.QHBoxLayout()
-            cell.setContentsMargins(0, 0, 0, 0)
-            cell.setSpacing(5)
-            cell.addWidget(dot)
-            cell.addWidget(label, 1)
-
             rows.addWidget(active, r, 0)
-            rows.addLayout(cell, r, 1)
+            rows.addWidget(label, r, 1)
             rows.addWidget(gains, r, 2)
             rows.addWidget(rld, r, 3)
 
@@ -1203,7 +1620,6 @@ class MainWindow(QtWidgets.QMainWindow):
             self.ch_label.append(label)
             self.ch_rld.append(rld)
             self.ch_gain.append(gains)
-            self.ch_status.append(dot)
         v.addLayout(rows)
 
         self.apply_btn = QtWidgets.QPushButton("Apply channel setup")
@@ -1376,8 +1792,23 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.worker = SerialWorker(port, self._mode(), mirror)
         self.worker.connected_ok.connect(self._on_connected)
+        self.worker.recovered.connect(self._on_recovered)
         self.worker.failed.connect(self._on_failed)
+        self.worker.command_sent.connect(self._on_command_sent)
+        self._reset_channel_state()
         self.worker.start()
+
+    def _on_command_sent(self, tag):
+        """Fired from the serial thread once a command's bytes are on the wire."""
+        if not tag or not self.worker:
+            return
+        kind, channel, state = tag
+        if kind == "rld":
+            self._rld_sent[channel - 1] = (state, time.monotonic())
+        elif kind == "ch":
+            # comes back with the gain the command carried (None when it was an
+            # off command) - that is what the board was actually told
+            self._ch_gain_ok[channel - 1] = state
 
     def _on_connected(self, description):
         self.connected = True
@@ -1393,12 +1824,29 @@ class MainWindow(QtWidgets.QMainWindow):
         self.statusBar().showMessage(f"Connected: {description}")
         QtCore.QTimer.singleShot(1400, self._apply_config)
 
+    def _on_recovered(self, message):
+        if not self.worker:
+            return
+        # The reopen reset the board, so every channel it had is off again.
+        self._reset_channel_state()
+        self.conn_label.setText(message)
+        self.conn_label.setStyleSheet(f"color:{GOOD}; background:transparent;")
+        self.conn_dot.setStyleSheet(f"color:{GOOD}; font-size:8px;")
+        self.pill.setText("streaming")
+        self.pill.setStyleSheet(
+            f"background:rgba(74,222,128,28); color:{GOOD}; border-radius:9px;"
+            f" padding:3px 12px; font-size:11px; font-weight:bold;")
+        self.statusBar().showMessage(
+            f"{message}; re-sending channel setup")
+        QtCore.QTimer.singleShot(1200, self._apply_config)
+
     def _on_failed(self, message):
         worker, self.worker = self.worker, None
         if worker is not None:
             worker.stop()
             worker.wait(1500)
         self.connected = False
+        self._setup_pending = 0
         self.connect_btn.setText("Connect")
         self._style_connect(False)
         self.conn_label.setText("Disconnected")
@@ -1408,8 +1856,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.pill.setStyleSheet(
             f"background:{PANEL_2}; color:{DIM}; border-radius:9px; padding:3px 12px;"
             f"font-size:11px; font-weight:bold;")
-        for dot in self.ch_status:
-            dot.setStyleSheet(f"background:{MUTED}; border-radius:3px;")
+        self._reset_channel_state()
         QtWidgets.QMessageBox.critical(self, "Connection failed", message)
 
     def _disconnect(self):
@@ -1418,6 +1865,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.worker.wait(2500)
             self.worker = None
         self.connected = False
+        self._setup_pending = 0
         self.connect_btn.setText("Connect")
         self._style_connect(False)
         self.conn_label.setText("Disconnected")
@@ -1428,8 +1876,7 @@ class MainWindow(QtWidgets.QMainWindow):
             f"background:{PANEL_2}; color:{DIM}; border-radius:9px; padding:3px 12px;"
             f"font-size:11px; font-weight:bold;")
         self.stat_label.setText("")
-        for dot in self.ch_status:
-            dot.setStyleSheet(f"background:{MUTED}; border-radius:3px;")
+        self._reset_channel_state()
 
     def _apply_later(self):
         if not self.connected:
@@ -1443,18 +1890,53 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         self.apply_btn.setText("Apply channel setup")
         self._style_apply(False)
-        # 2 s after stream start, then ~1 s between channels, as the docs require.
-        delay = 1.6
+        # The firmware handles one command at a time and needs >1 s between any
+        # two of them: measured on the board, 1.0 s loses them, 1.5 s is reliable.
+        # Channel on/off goes first and RLD second, because a dropped RLD command
+        # also swallows the channel command queued behind it.
+        #
+        # Only what actually differs from the board goes out: otherwise ticking
+        # one RLD box would re-send all sixteen commands and leave the user
+        # staring at a dashed chip for half a minute.
+        gap = 1.5
+        commands = []          # (text, tag)
+        on_after = []          # channels that will be on once this has settled
         for ch in range(1, 9):
-            gain = int(self.ch_gain[ch - 1].currentText())
-            if self.ch_active[ch - 1].isChecked():
-                self.worker.send_command(kp.cmd_channel_on(ch, gain), delay_after=1.0)
-                cmd = kp.cmd_rld_on(ch) if self.ch_rld[ch - 1].isChecked() else kp.cmd_rld_off(ch)
-                self.worker.send_command(cmd, delay_after=0.5)
-            else:
-                self.worker.send_command(kp.cmd_channel_off(ch), delay_after=0.5)
+            idx = ch - 1
+            want_on = self.ch_active[idx].isChecked()
+            gain = int(self.ch_gain[idx].currentText())
+            if want_on and (not self._ch_on[idx] or self._ch_gain_ok[idx] != gain):
+                commands.append((kp.cmd_channel_on(ch, gain), ("ch", ch, gain)))
+                on_after.append(ch)
+            elif not want_on and self._ch_on[idx]:
+                commands.append((kp.cmd_channel_off(ch), ("ch", ch, None)))
+                # The board drops a channel's RLD with the channel itself.
+                self._rld_ok[idx] = False
+                self._rld_sent[idx] = None
+            elif want_on:
+                on_after.append(ch)
+        for ch in on_after:
+            idx = ch - 1
+            want_rld = bool(self.ch_rld[idx].isChecked())
+            if self._rld_ok[idx] != want_rld:
+                cmd = kp.cmd_rld_on(ch) if want_rld else kp.cmd_rld_off(ch)
+                commands.append((cmd, ("rld", ch, want_rld)))
+        if not commands:
+            self._setup_pending = 0
+            self.statusBar().showMessage(
+                "Channel setup already matches the board", 3000)
+            return
+        # Anything left over from a previous apply still has to go out, so the
+        # count includes it; the status line clears only when the queue drains.
+        queued_before = self.worker.queued_commands()
+        for text, tag in commands:
+            self.worker.send_command(text, delay_after=gap, tag=tag)
+        total = len(commands)
+        self._setup_pending = queued_before + total
+        self._setup_total = self._setup_pending
         self.statusBar().showMessage(
-            "Sending channel setup — the board applies one command at a time (~15 s)")
+            f"Sending channel setup — {total} commands, one every {gap:g} s "
+            f"(~{total * gap:.0f} s)")
 
     # -- display config ----------------------------------------------------
     def _set_filter(self, index):
@@ -1622,12 +2104,16 @@ class MainWindow(QtWidgets.QMainWindow):
                     break
         for item in new:
             self.history.append(item)
+            for ch in range(8):
+                self._ch_recent[ch].append(item[1][ch] != 0)
             if self.imu_window is not None and self.imu_window.isVisible() and item[2]:
                 self.imu_window.push(item[2])
             if self.rec:
                 self._write_row(item)
 
         self._update_stats()
+        self._update_channel_state()
+        self._update_setup_status()
 
         if self.rec:
             elapsed = self._record_elapsed()
@@ -1676,15 +2162,99 @@ class MainWindow(QtWidgets.QMainWindow):
             f"{fps:5.1f} fps   {board}   {s.get('total', 0):,} frames"
             f"   gaps {gaps}   repeats {repeats}")
 
+    # -- confirmed board state ---------------------------------------------
+    def _reset_channel_state(self):
+        """Forget everything we thought we knew about the board."""
+        for d in self._ch_recent:
+            d.clear()
+        self._ch_on = [False] * 8
+        self._ch_gain_ok = [None] * 8
+        self._rld_ok = [False] * 8
+        self._rld_sent = [None] * 8
         for ch in range(8):
-            dot = self.ch_status[ch]
-            recent = [abs(f[1][ch]) for f in list(self.history)[-25:]] if self.history else []
-            if not self.ch_active[ch].isChecked():
-                dot.setStyleSheet(f"background:{MUTED}; border-radius:3px;")
-            elif not recent or max(recent) == 0:
-                dot.setStyleSheet(f"background:{BAD}; border-radius:3px;")
-            else:
-                dot.setStyleSheet(f"background:{GOOD}; border-radius:3px;")
+            self.ch_active[ch].set_pending(False)
+            self.ch_rld[ch].set_pending(False)
+            self.ch_active[ch].setEnabled(False)
+            self.ch_rld[ch].setEnabled(False)
+            self.ch_gain[ch].setEnabled(False)
+
+    def _update_channel_state(self):
+        """Light a chip only when the board is really in that state.
+
+        Channels are confirmed from the samples themselves: a channel that is
+        on produces counts, one that is off is all zeros.  That is also what
+        makes the setup visibly tick on, one channel every 1.5 s, instead of
+        eight chips turning blue the moment they are queued.
+
+        RLD has no feedback at all - the firmware has no query and sends no
+        acknowledgement - so a written RLD command is taken as applied after
+        RLD_SETTLE.  It is the one state this app cannot verify.
+        """
+        now = time.monotonic()
+        for ch in range(8):
+            want_on = self.ch_active[ch].isChecked()
+            on_now = bool(self._ch_recent[ch]) and any(self._ch_recent[ch])
+            self._ch_on[ch] = on_now
+            waiting_on = self.connected and (want_on != on_now)
+            self.ch_active[ch].set_pending(waiting_on)
+            # The chip stays clickable while pending so a channel that never
+            # confirms can be called off again; the rest of the row waits.
+            self.ch_active[ch].setEnabled(self.connected)
+            self.ch_gain[ch].setEnabled(self.connected and not waiting_on)
+
+            sent = self._rld_sent[ch]
+            if sent is not None and now - sent[1] >= RLD_SETTLE:
+                self._rld_ok[ch] = sent[0]
+                self._rld_sent[ch] = None
+            want_rld = self.ch_rld[ch].isChecked()
+            # RLD is only meaningful on a channel that is on (or is about to be),
+            # so that is when a differing RLD counts as "waiting".
+            waiting_rld = (self.connected and (want_on or on_now)
+                           and (want_rld != self._rld_ok[ch]))
+            self.ch_rld[ch].set_pending(waiting_rld)
+            self.ch_rld[ch].setEnabled(self.connected and on_now)
+
+    def _setup_counts(self):
+        want = sum(1 for w in self.ch_active if w.isChecked())
+        on = sum(1 for ch in range(8)
+                 if self.ch_active[ch].isChecked() and self._ch_on[ch])
+        want_rld = sum(1 for ch in range(8)
+                       if self.ch_active[ch].isChecked() and self.ch_rld[ch].isChecked())
+        rld = sum(1 for ch in range(8)
+                  if self.ch_active[ch].isChecked() and self._ch_on[ch]
+                  and self._rld_ok[ch] and self.ch_rld[ch].isChecked())
+        return on, want, rld, want_rld
+
+    def _update_setup_status(self):
+        """Clear the setup message when the queue drains, instead of leaving it
+        up forever.  The worker holds the first command until the board has
+        rebooted (~3 s), so this text tracks the real queue."""
+        if not self._setup_pending:
+            return
+        if not self.worker:
+            self._setup_pending = 0
+            return
+        on, want, rld, want_rld = self._setup_counts()
+        if not self.worker.ready:
+            self.statusBar().showMessage(
+                f"Waiting for the board to start streaming — "
+                f"{self._setup_total} commands queued")
+            return
+        left = self.worker.queued_commands()
+        # An RLD command is only called applied a second after it was written,
+        # so hold the "done" message until those have landed; otherwise the
+        # summary reads 7/8 RLD for a second and then goes away.
+        if left > 0 or any(s is not None for s in self._rld_sent):
+            done = max(0, self._setup_total - left)
+            tail = "  ·  waiting for the board to settle" if left <= 0 else ""
+            self.statusBar().showMessage(
+                f"Sending channel setup — {max(left, 0)} of {self._setup_total} "
+                f"left ({done} sent)  ·  {on}/{want} channels on{tail}")
+            return
+        self._setup_pending = 0
+        self.statusBar().showMessage(
+            f"Channel setup applied — {on}/{want} channels on, "
+            f"{rld}/{want_rld} RLD", 5000)
 
     def _draw(self):
         n = int(self.window_secs * kp.SAMPLE_RATE)
@@ -1692,16 +2262,19 @@ class MainWindow(QtWidgets.QMainWindow):
         if not hist:
             self.trace.set_lanes([], self.window_secs, [],
                                  "Connect the board to see live traces")
+            self._fft_history.clear()
             self.spectrum.set_items([])
             return
 
         labels = [w.text().strip() for w in self.ch_label]
         lanes = []
+        filtered_all = []
         for ch in range(8):
             gain = int(self.ch_gain[ch].currentText())
             counts = np.array([f[1][ch] for f in hist], dtype=float)
             uv = counts * kp.uv_per_count(gain)
             filtered = apply_filter(uv, kp.SAMPLE_RATE, self.filter_preset)
+            filtered_all.append(filtered)
             label = channel_name(labels, ch)
             sub = f"gain {gain}  ·  {kp.uv_per_count(gain):.3f} µV/count"
             if labels[ch]:
@@ -1710,7 +2283,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 "label": label,
                 "sub": sub,
                 "visible": True,
-                "dim": not self.ch_active[ch].isChecked(),
+                "dim": not self._ch_on[ch],
                 "curves": [(TRACE_COLORS[ch], filtered)],
             })
         marks = []
@@ -1719,20 +2292,19 @@ class MainWindow(QtWidgets.QMainWindow):
             marks = [(now - t, label) for t, label in self.live_markers]
         self.trace.set_lanes(lanes, self.window_secs, marks)
 
-        items = []
-        if hist:
-            for ch in range(8):
-                if not self.ch_active[ch].isChecked():
-                    continue
-                gain = int(self.ch_gain[ch].currentText())
-                counts = np.array([f[1][ch] for f in hist], dtype=float)
-                uv = apply_filter(counts * kp.uv_per_count(gain), kp.SAMPLE_RATE, self.filter_preset)
-                if uv.size >= 128:
-                    freqs, psd = sps.welch(uv, fs=kp.SAMPLE_RATE, nperseg=128, noverlap=64,
-                                           window="blackmanharris", detrend=False)
-                    items.append((TRACE_COLORS[ch], f"ch{ch + 1}", freqs,
-                                  10.0 * np.log10(np.maximum(psd, 1e-20))))
-        self.spectrum.set_items(items)
+        # Spectrum, exactly as the Visualizer does it: average every channel
+        # whose window is not all zeros, Welch the mean, and keep the last three
+        # results on screen (the older ones dimmed).
+        active = [c for c in filtered_all if c.size and np.any(c != 0)]
+        if active and min(c.size for c in active) >= 128:
+            mean_sig = np.mean(active, axis=0)
+            freqs, psd = sps.welch(mean_sig, fs=kp.SAMPLE_RATE, nperseg=128,
+                                   noverlap=64, window="blackmanharris",
+                                   detrend=False)
+            self._fft_history.append((freqs, psd))
+        elif not active:
+            self._fft_history.clear()
+        self.spectrum.set_items(list(self._fft_history))
 
     def closeEvent(self, event):
         self._save_channels()
@@ -1788,6 +2360,9 @@ QComboBox:hover, QSpinBox:hover, QLineEdit:hover, QKeySequenceEdit:hover {{
 }}
 QComboBox:focus, QSpinBox:focus, QLineEdit:focus, QKeySequenceEdit:focus {{
     border-color:{ACCENT};
+}}
+QComboBox:disabled, QSpinBox:disabled, QKeySequenceEdit:disabled {{
+    color:{MUTED}; border-color:{LINE_SOFT}; background:{PANEL};
 }}
 QComboBox::drop-down {{ border:none; width:18px; }}
 QComboBox::down-arrow {{ image:none; width:0px; height:0px; }}
