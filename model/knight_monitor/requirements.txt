@@ -1,0 +1,14 @@
+# Knight Monitor - live traces, spectrum and recorder for the Knight EEG board.
+#
+#   cd model/knight_monitor
+#   py -m pip install -r requirements.txt
+#   py knight_app.py            # add --selftest for a headless smoke test
+#
+# Developed and verified with PySide6 6.11.0, numpy 2.2.6, scipy 1.14.0 and
+# pyserial 3.5 on Python 3.12.2.  Everything else the app imports is in the
+# standard library.
+
+PySide6    # UI, painting, the spectrum view and the IMU cube
+numpy      # sample buffers, lane scaling, Welch input
+scipy      # butter / sosfiltfilt filters, welch PSD
+pyserial   # board port and the port picker (serial.tools.list_ports)
