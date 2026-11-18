@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101827">
+  <title>ALLEY Mobility | Wheelchair Control</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b1220;
+      --panel: #121d2f;
+      --panel-2: #18263a;
+      --line: #2a3b52;
+      --text: #edf4ff;
+      --muted: #9aabc1;
+      --cyan: #54d7e8;
+      --green: #58d69a;
+      --red: #ff6878;
+      --amber: #ffca6a;
+      --shadow: 0 18px 55px rgba(0,0,0,.28);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100vh; color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: radial-gradient(ellipse at 15% 0%, #17304a 0, transparent 36%),
+                  radial-gradient(ellipse at 100% 5%, #1b3042 0, transparent 30%), var(--bg);
+    }
+    .shell { width: min(1120px, calc(100% - 28px)); margin: 0 auto; padding: 26px 0 44px; }
+    header { display:flex; gap:18px; align-items:center; justify-content:space-between; margin-bottom:22px; }
+    .brand { display:flex; align-items:center; gap:13px; }
+    .logo { width:46px; height:46px; border:1px solid #3f7182; border-radius:14px; display:grid; place-items:center;
+      color:var(--cyan); background:linear-gradient(145deg,#1a4351,#14253a); font-weight:900; letter-spacing:-2px; }
+    h1 { font-size: clamp(21px, 4vw, 29px); margin:0; letter-spacing:-.7px; }
+    .sub { color:var(--muted); margin-top:3px; font-size:13px; }
+    .pill { border:1px solid var(--line); color:var(--muted); border-radius:999px; padding:8px 12px; font-size:12px; white-space:nowrap; }
+    .grid { display:grid; grid-template-columns: minmax(0,1.25fr) minmax(280px,.75fr); gap:18px; }
+    .panel { background:linear-gradient(155deg,rgba(24,38,58,.97),rgba(15,25,41,.97)); border:1px solid var(--line); border-radius:20px; box-shadow:var(--shadow); padding:20px; }
+    .panel h2 { margin:0 0 15px; font-size:16px; letter-spacing:.1px; }
+    .section-head { display:flex; justify-content:space-between; gap:12px; align-items:center; margin-bottom:15px; }
+    .section-head h2 { margin:0; }
+    .status { display:inline-flex; gap:7px; align-items:center; color:var(--amber); font-size:12px; }
+    .dot { width:8px; height:8px; border-radius:50%; background:currentColor; box-shadow:0 0 12px currentColor; }
+    .status.ok { color:var(--green); }
+    .status.bad { color:var(--red); }
+    .control-layout { display:grid; grid-template-columns: minmax(0,1fr) minmax(190px,.75fr); gap:18px; align-items:center; }
+    .dpad { width:min(100%,290px); aspect-ratio:1; margin:0 auto; display:grid; grid-template:repeat(3,1fr)/repeat(3,1fr); gap:9px; }
+    button { font:inherit; cursor:pointer; border:1px solid #38516a; color:var(--text); background:linear-gradient(160deg,#263c56,#1a2b42); border-radius:15px; transition:transform .08s,border-color .12s,filter .12s; touch-action:none; user-select:none; }
+    button:focus-visible, input:focus-visible, select:focus-visible { outline:2px solid var(--cyan); outline-offset:3px; }
+    button:active, button.pressed { transform:scale(.96); border-color:var(--cyan); filter:brightness(1.25); }
+    .move { min-height:75px; display:grid; place-items:center; gap:3px; font-weight:750; }
+    .move .arrow { font-size:28px; line-height:1; color:var(--cyan); }
+    .move small { font-size:10px; color:var(--muted); font-weight:600; letter-spacing:.9px; }
+    .empty { visibility:hidden; }
+    .stop { width:100%; min-height:64px; margin-top:13px; background:linear-gradient(135deg,#8d3043,#632432); border-color:#b34b5b; font-weight:850; letter-spacing:1px; }
+    .stop span { font-size:11px; display:block; opacity:.8; margin-top:2px; letter-spacing:.6px; }
+    .readout { display:grid; gap:10px; }
+    .readout-card { border:1px solid var(--line); background:rgba(7,15,27,.35); border-radius:14px; padding:13px; }
+    .kicker { color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:1.2px; }
+    .big { font-size:22px; font-weight:800; margin-top:5px; text-transform:uppercase; }
+    .small { font-size:12px; color:var(--muted); line-height:1.5; margin-top:4px; overflow-wrap:anywhere; }
+    .two { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+    label { display:block; color:var(--muted); font-size:12px; margin:0 0 7px; }
+    input, select { width:100%; min-height:43px; border-radius:10px; background:#0b1728; color:var(--text); border:1px solid var(--line); padding:10px 12px; font:inherit; }
+    .row { display:flex; gap:9px; align-items:center; }
+    .row > * { min-width:0; }
+    .primary { min-height:43px; padding:0 15px; background:linear-gradient(135deg,#1d8294,#235b83); border-color:#3d9cab; font-weight:750; white-space:nowrap; }
+    .secondary { min-height:43px; padding:0 15px; background:#1c2c42; white-space:nowrap; }
+    .hint { margin-top:9px; color:var(--muted); font-size:11px; line-height:1.5; }
+    .divider { height:1px; background:var(--line); margin:17px 0; }
+    .log { min-height:100px; max-height:170px; overflow:auto; border:1px solid var(--line); border-radius:12px; background:#081321; padding:11px; font:11px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace; color:#b9c9dc; white-space:pre-wrap; overflow-wrap:anywhere; }
+    .warning { margin-top:18px; padding:14px 15px; border-radius:14px; border:1px solid #765c2f; background:rgba(96,68,22,.2); color:#f5d99d; font-size:12px; line-height:1.55; }
+    .footer { color:#75869d; font-size:11px; text-align:center; margin-top:18px; }
+    @media (max-width:800px) { .grid { grid-template-columns:1fr; } .control-layout { grid-template-columns:1fr; } .readout { grid-template-columns:repeat(2,minmax(0,1fr)); } .readout .readout-card:last-child { grid-column:1/-1; } }
+    @media (max-width:480px) { .shell { width:min(100% - 18px,1120px); padding-top:15px; } header { align-items:flex-start; } .pill { display:none; } .panel { padding:15px; border-radius:16px; } .readout { grid-template-columns:1fr 1fr; } .row.connect-row { align-items:stretch; flex-direction:column; } .row.connect-row button { width:100%; } }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <div class="brand">
+        <div class="logo">A</div>
+        <div><h1>ALLEY Mobility</h1><div class="sub">Jetson wheelchair control dashboard</div></div>
+      </div>
+      <div class="pill">LOCAL NETWORK · PORT 8010</div>
+    </header>
+
+    <div class="grid">
+      <section class="panel">
+        <div class="section-head">
+          <h2>Movement controls</h2>
+          <div id="connectionStatus" class="status"><span class="dot"></span><span>Not connected</span></div>
+        </div>
+        <div class="control-layout">
+          <div>
+            <div class="dpad" aria-label="Directional controls">
+              <div class="empty"></div>
+              <button class="move" data-direction="forward" aria-label="Hold to move forward"><span class="arrow">▲</span><small>W / ↑</small></button>
+              <div class="empty"></div>
+              <button class="move" data-direction="left" aria-label="Hold to turn left"><span class="arrow">◀</span><small>A / ←</small></button>
+              <div class="empty"></div>
+              <button class="move" data-direction="right" aria-label="Hold to turn right"><span class="arrow">▶</span><small>D / →</small></button>
+              <div class="empty"></div>
+              <button class="move" data-direction="backward" aria-label="Hold to move backward"><span class="arrow">▼</span><small>S / ↓</small></button>
+              <div class="empty"></div>
+            </div>
+            <button class="stop" id="stopButton">■ &nbsp; STOP<span>SPACE or X · RELEASE ALL CONTROLS</span></button>
+          </div>
+          <div class="readout">
+            <div class="readout-card"><div class="kicker">Current command</div><div class="big" id="directionValue">STOP</div><div class="small" id="sourceValue">Waiting for a connection</div></div>
+            <div class="readout-card"><div class="kicker">Physical DAC output</div><div class="big" id="dacValue">UNKNOWN</div><div class="small">Hardware state reported by the Jetson bridge</div></div>
+            <div class="readout-card"><div class="kicker">Voltage profile</div><div class="big" id="modeValue">—</div><div class="small" id="mapValue">Connect to retrieve the configured movement map</div></div>
+          </div>
+        </div>
+        <div class="warning"><strong>Safety:</strong> This is a development interface, not a safety-rated wheelchair controller. Keep the chair secured with drive wheels clear during testing, keep an independent physical power disconnect available, and do not rely on the software STOP or watchdog as an emergency stop. DAC output should remain disarmed until the analog interface and neutral voltages have been independently verified.</div>
+      </section>
+
+      <aside class="panel">
+        <h2>Jetson connection</h2>
+        <label for="tokenInput">Private bridge token</label>
+        <input id="tokenInput" type="password" autocomplete="off" spellcheck="false" placeholder="Paste the token from the Jetson" />
+        <div class="hint">On the Jetson, retrieve it with <code>sudo cat /etc/alley-wheelchair/bridge.token</code>. Do not share this token or put it inside index.html.</div>
+        <div style="height:13px"></div>
+        <div class="two">
+          <div><label for="hostInput">Jetson host / IP</label><input id="hostInput" value="" placeholder="Auto from page" /></div>
+          <div><label for="wsPortInput">WebSocket port</label><input id="wsPortInput" type="number" value="8011" min="1" max="65535" /></div>
+        </div>
+        <div style="height:12px"></div>
+        <div class="row connect-row">
+          <button class="primary" id="connectButton">Connect to Jetson</button>
+          <button class="secondary" id="disconnectButton" disabled>Disconnect</button>
+        </div>
+        <div class="hint" id="connectionHint">The dashboard page should be opened from the Jetson at http://JETSON-IP:8010/.</div>
+        <div class="divider"></div>
+        <h2>Controller status</h2>
+        <div class="two">
+          <div class="readout-card"><div class="kicker">Watchdog</div><div class="big" style="font-size:17px" id="watchdogValue">—</div></div>
+          <div class="readout-card"><div class="kicker">EEG module</div><div class="big" style="font-size:17px">PLACEHOLDER</div></div>
+        </div>
+        <div class="hint">EEG.py is only an integration template at this stage. The headset receiver and signal classifier have not been implemented, so this page does not display live EEG data.</div>
+        <div class="divider"></div>
+        <div class="section-head"><h2>Event log</h2><button class="secondary" id="clearLog" style="min-height:30px;padding:0 9px;font-size:11px">Clear</button></div>
+        <div class="log" id="eventLog" aria-live="polite">Dashboard loaded. No movement command has been sent.</div>
+      </aside>
+    </div>
+    <div class="footer">ALLEY Mobility · Local Jetson bridge · Use only on a trusted private LAN</div>
+  </main>
+
+  <script>
+    (() => {
+      'use strict';
+      const $ = (id) => document.getElementById(id);
+      const statusEl = $('connectionStatus');
+      const tokenInput = $('tokenInput');
+      const hostInput = $('hostInput');
+      const portInput = $('wsPortInput');
+      const connectButton = $('connectButton');
+      const disconnectButton = $('disconnectButton');
+      const logEl = $('eventLog');
+      let socket = null;
+      let authenticated = false;
+      let seq = 0;
+      let heldDirection = null;
+      let heartbeatTimer = null;
+      let activeButton = null;
+      let bridgeInfoReceived = false;
+
+      hostInput.value = window.location.hostname || '192.168.0.115';
+      function log(message) {
+        const time = new Date().toLocaleTimeString();
+        logEl.textContent = `[${time}] ${message}\n` + logEl.textContent;
+      }
+      function setStatus(label, kind) {
+        statusEl.className = `status ${kind || ''}`;
+        statusEl.innerHTML = '<span class="dot"></span><span></span>';
+        statusEl.querySelector('span:last-child').textContent = label;
+      }
+      function setConnectedUi(connected) {
+        connectButton.disabled = connected;
+        disconnectButton.disabled = !connected;
+      }
+      function send(payload) {
+        if (!socket || socket.readyState !== WebSocket.OPEN || !authenticated) return false;
+        socket.send(JSON.stringify(payload));
+        return true;
+      }
+      function sendCommand(direction) {
+        if (!send({type:'command', direction, source:'browser-dashboard', seq:++seq})) {
+          log(`Not sent: ${direction.toUpperCase()} (not authenticated)`);
+          return false;
+        }
+        $('directionValue').textContent = direction.toUpperCase();
+        $('sourceValue').textContent = 'Source: browser dashboard';
+        return true;
+      }
+      function stopHeartbeat() {
+        if (heartbeatTimer !== null) clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
+      }
+      function releaseMovement(sendStop = true) {
+        stopHeartbeat();
+        heldDirection = null;
+        if (activeButton) activeButton.classList.remove('pressed');
+        activeButton = null;
+        if (sendStop && authenticated) sendCommand('stop');
+      }
+      function holdMovement(direction, button = null) {
+        if (!authenticated) { log('Connect and authenticate before sending controls.'); return; }
+        if (heldDirection === direction) return;
+        releaseMovement(false);
+        heldDirection = direction;
+        activeButton = button;
+        if (activeButton) activeButton.classList.add('pressed');
+        sendCommand(direction);
+        // Refresh command before the bridge watchdog (0.85 s) expires.
+        heartbeatTimer = setInterval(() => {
+          if (heldDirection && authenticated) sendCommand(heldDirection);
+        }, 250);
+      }
+      function disconnect(sendStop = true) {
+        releaseMovement(sendStop);
+        authenticated = false;
+        bridgeInfoReceived = false;
+        if (socket) {
+          const old = socket;
+          socket = null;
+          try { old.close(1000, 'Dashboard disconnect'); } catch (_) {}
+        }
+        setConnectedUi(false);
+        setStatus('Disconnected', 'bad');
+        $('sourceValue').textContent = 'No active connection';
+      }
+
+      connectButton.addEventListener('click', () => {
+        if (socket && socket.readyState === WebSocket.OPEN) return;
+        const token = tokenInput.value.trim();
+        const host = hostInput.value.trim() || window.location.hostname;
+        const port = Number(portInput.value);
+        if (token.length < 32) { log('Enter the private bridge token (at least 32 characters).'); tokenInput.focus(); return; }
+        if (!Number.isInteger(port) || port < 1 || port > 65535) { log('Enter a valid WebSocket port.'); portInput.focus(); return; }
+        const url = `ws://${host}:${port}`;
+        setStatus('Connecting…', '');
+        $('connectionHint').textContent = `Connecting to ${url}`;
+        log(`Connecting to ${url}`);
+        try { socket = new WebSocket(url); }
+        catch (error) { setStatus('Connection failed', 'bad'); log(`WebSocket error: ${error.message}`); return; }
+        const thisSocket = socket;
+        setConnectedUi(true);
+        thisSocket.addEventListener('open', () => {
+          setStatus('Authenticating…', '');
+          log('WebSocket opened; waiting for bridge authentication request.');
+        });
+        thisSocket.addEventListener('message', (event) => {
+          let data;
+          try { data = JSON.parse(event.data); } catch (_) { log('Ignored non-JSON server message.'); return; }
+          switch (data.type) {
+            case 'auth_required':
+              thisSocket.send(JSON.stringify({type:'auth', token}));
+              log('Sent authentication token to the local Jetson bridge.');
+              break;
+            case 'auth_ok':
+              authenticated = true;
+              setStatus('Connected · authenticated', 'ok');
+              $('connectionHint').textContent = 'Authenticated on the local network. Hold a direction button or W/A/S/D; release to STOP.';
+              log('Authentication successful.');
+              break;
+            case 'auth_error':
+              log(`Authentication rejected: ${data.message || 'invalid token'}`);
+              setStatus('Authentication failed', 'bad');
+              disconnect(false);
+              break;
+            case 'hello':
+              bridgeInfoReceived = true;
+              $('directionValue').textContent = String(data.direction || 'stop').toUpperCase();
+              $('sourceValue').textContent = `Last source: ${data.source || 'unknown'}`;
+              $('dacValue').textContent = String(data.hardware_output || 'unknown').toUpperCase();
+              $('modeValue').textContent = data.voltage_mode ? `${data.voltage_mode} V` : '—';
+              $('watchdogValue').textContent = data.watchdog_seconds ? `${data.watchdog_seconds} sec` : '—';
+              if (data.voltage_map) {
+                const m = data.voltage_map;
+                const pair = (value) => Array.isArray(value) ? value.map((v) => Number(v).toFixed(1)).join(' / ') + ' V' : '—';
+                $('mapValue').textContent = `F ${pair(m.forward)} · B ${pair(m.backward)} · L ${pair(m.left)} · R ${pair(m.right)} · STOP ${pair(m.stop)}`;
+              }
+              log(`Bridge ready. DAC output: ${data.hardware_output || 'unknown'}.`);
+              break;
+            case 'state':
+            case 'terminal_command':
+              $('directionValue').textContent = String(data.direction || 'stop').toUpperCase();
+              $('sourceValue').textContent = `Source: ${data.source || data.origin || 'controller'}`;
+              if (data.hardware_output) $('dacValue').textContent = data.hardware_output.toUpperCase();
+              log(`State: ${(data.direction || 'stop').toUpperCase()} from ${data.source || data.origin || 'controller'}.`);
+              break;
+            case 'ack':
+              if (data.hardware_output) $('dacValue').textContent = data.hardware_output.toUpperCase();
+              break;
+            case 'error':
+              log(`Bridge error: ${data.message || 'unknown error'}`);
+              break;
+            default:
+              if (data.message) log(`${data.type || 'Server'}: ${data.message}`);
+          }
+        });
+        thisSocket.addEventListener('close', (event) => {
+          if (socket !== thisSocket) return;
+          const wasAuthenticated = authenticated;
+          authenticated = false;
+          releaseMovement(false);
+          socket = null;
+          setConnectedUi(false);
+          setStatus('Disconnected', 'bad');
+          if (wasAuthenticated) log('Bridge connection closed. The server watchdog/disconnect handler should request STOP.');
+          else log(`Connection closed (code ${event.code}). Check host, port, token, and allowed subnet.`);
+        });
+        thisSocket.addEventListener('error', () => {
+          log('WebSocket connection error. Check that the Jetson bridge is running and the port is reachable.');
+          setStatus('Connection error', 'bad');
+        });
+      });
+
+      disconnectButton.addEventListener('click', () => disconnect(true));
+      $('stopButton').addEventListener('click', () => {
+        releaseMovement(false);
+        if (authenticated) {
+          sendCommand('stop');
+          log('STOP requested from dashboard.');
+        } else log('STOP cannot be sent because the dashboard is not connected.');
+      });
+      $('clearLog').addEventListener('click', () => { logEl.textContent = 'Event log cleared.'; });
+
+      document.querySelectorAll('[data-direction]').forEach((button) => {
+        const direction = button.dataset.direction;
+        button.addEventListener('pointerdown', (event) => {
+          event.preventDefault();
+          try { button.setPointerCapture(event.pointerId); } catch (_) {}
+          holdMovement(direction, button);
+        });
+        const release = () => { if (heldDirection === direction) releaseMovement(true); };
+        button.addEventListener('pointerup', release);
+        button.addEventListener('pointercancel', release);
+        button.addEventListener('lostpointercapture', release);
+        button.addEventListener('contextmenu', (event) => event.preventDefault());
+      });
+
+      const keyDirections = {
+        w:'forward', arrowup:'forward', s:'backward', arrowdown:'backward',
+        a:'left', arrowleft:'left', d:'right', arrowright:'right'
+      };
+      window.addEventListener('keydown', (event) => {
+        const tag = event.target && event.target.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+        const key = event.key.toLowerCase();
+        if (keyDirections[key]) {
+          event.preventDefault();
+          if (!event.repeat) holdMovement(keyDirections[key]);
+        } else if (key === ' ' || key === 'x') {
+          event.preventDefault();
+          releaseMovement(false);
+          if (authenticated) sendCommand('stop');
+        }
+      });
+      window.addEventListener('keyup', (event) => {
+        const key = event.key.toLowerCase();
+        if (keyDirections[key] && heldDirection === keyDirections[key]) releaseMovement(true);
+      });
+      window.addEventListener('blur', () => releaseMovement(true));
+      document.addEventListener('visibilitychange', () => { if (document.hidden) releaseMovement(true); });
+      window.addEventListener('beforeunload', () => { releaseMovement(true); });
+      setStatus('Not connected', '');
+    })();
+  </script>
+</body>
+</html>
