@@ -8,7 +8,7 @@ from brainflow.board_shim import BoardShim, BrainFlowInputParams
 from scipy.signal import butter, sosfilt, sosfilt_zi
 
 # ====== USER CONFIG ======
-board_id        = 57
+board_id        = 66
 serial_port     = input("What port: ")
 PROMPT_COUNTS   = False
 TRIAL_LENGTH_SECS = 4.0
