@@ -24,7 +24,7 @@ PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 output_dir = os.path.join(PROJECT_ROOT, "data")
 
 # Channel Order (board order must match)
-chan_names  = ["CP3", "Fp2", "Fp1", "Cz", "FC6", "FC5", "C1", "C2"]
+chan_names  = ["CP3", "Fp2", "Fp1", "Cz", "FC6", "FC5", "C3", "C4"]
 
 # ====== LABELS ======
 labels = ['left', 'right', 'tongue', 'feet']
