@@ -9,7 +9,7 @@ from scipy.signal import butter, sosfilt, sosfilt_zi
 
 # ====== USER CONFIG ======
 board_id        = 57
-serial_port     = "COM3"
+serial_port     = input("What port: ")
 PROMPT_COUNTS   = False
 TRIAL_LENGTH_SECS = 4.0
 TRIALS_PER_CLASS_DEFAULT = {'left': 15, 'right': 15, 'tongue': 15, 'feet': 15}       # higher number of trials increases precision and accuracy of the model (usable detector requires minimum of 5 ea)
