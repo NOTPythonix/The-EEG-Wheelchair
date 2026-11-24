@@ -8,7 +8,6 @@ __pycache__/
 
 # Runtime recordings and app state
 recordings/
-model/knight_monitor/channels.json
 model/knight_monitor/markers.json
 
 # Freebuff's local project folder
