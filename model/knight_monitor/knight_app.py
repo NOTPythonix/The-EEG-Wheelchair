@@ -78,6 +78,11 @@ FILTER_SPEC = {
     "raw":        {"bandpass": None, "bandstop": []},
 }
 
+# Extra samples filtered on each side of the visible window and then dropped.
+# 8 samples = 64 ms, enough to move the zero-phase filter's edge ringing out of
+# the displayed trace without delaying the display.
+FILTER_PAD = 8
+
 
 @functools.lru_cache(maxsize=32)
 def _filters(preset: str, fs: int):
@@ -95,17 +100,64 @@ def _filters(preset: str, fs: int):
     return out
 
 
-def apply_filter(x: np.ndarray, fs: int, preset: str) -> np.ndarray:
-    """Zero-phase filtering, matching what the Visualizer does per window."""
+def _even_left(x: np.ndarray, count: int) -> np.ndarray:
+    """Mirror samples for the left end of a filter buffer (even symmetry)."""
+    if count <= 0:
+        return x[:0]
+    if x.size < 2:
+        return np.full(count, x[0]) if x.size else np.zeros(count)
+    k = min(count, x.size - 1)
+    return x[1:k + 1][::-1]
+
+
+def _even_right(x: np.ndarray, count: int) -> np.ndarray:
+    """Mirror samples for the right end of a filter buffer (even symmetry)."""
+    if count <= 0:
+        return x[:0]
+    if x.size < 2:
+        return np.full(count, x[-1]) if x.size else np.zeros(count)
+    k = min(count, x.size - 1)
+    return x[-2:-2 - k:-1]
+
+
+def apply_filter(x: np.ndarray, fs: int, preset: str, pad: int = 0) -> np.ndarray:
+    """Zero-phase filtering with even edge padding.
+
+    ``pad`` is the number of samples already added to each end of ``x``; those
+    samples are removed after filtering, so they only serve to give sosfiltfilt
+    something realistic to work with at the boundaries.  Odd padding (scipy's
+    default) creates a discontinuity on a near-Nyquist 60 Hz signal, which
+    shows up as a large spike at the front of every window.
+    """
     if preset == "raw" or x.size < 64:
-        return x - x.mean() if x.size else x
+        out = x - x.mean() if x.size else x
+        return out[pad:-pad] if pad and out.size > 2 * pad else out
     y = x - x.mean()
     for sos in _filters(preset, fs):
         try:
-            y = sps.sosfiltfilt(sos, y)
+            y = sps.sosfiltfilt(sos, y, padtype="even")
         except Exception:
-            return y
-    return y
+            return y[pad:-pad] if pad and y.size > 2 * pad else y
+    return y[pad:-pad] if pad and y.size > 2 * pad else y
+
+
+def filter_window(values: np.ndarray, fs: int, preset: str, pad: int,
+                  past: np.ndarray | None = None) -> np.ndarray:
+    """Filter a visible window without letting the edge transient show.
+
+    Real samples immediately before the window are used when available; the
+    far end is mirrored even though live data has no future samples yet.  The
+    extension is discarded after filtering, so the result is the same length
+    as ``values`` but free of the filtfilt boundary spike.
+    """
+    if pad <= 0 or values.size < 64 or preset == "raw":
+        return apply_filter(values, fs, preset)
+    past = np.asarray(past) if past is not None else values[:0]
+    left = past[-pad:]
+    if left.size < pad:
+        left = np.r_[_even_left(left if left.size else values, pad - left.size), left]
+    right = _even_right(values, pad)
+    return apply_filter(np.r_[left, values, right], fs, preset, pad=pad)
 
 
 def nice_range(value: float) -> float:
@@ -1316,11 +1368,13 @@ class ReplayWindow(QtWidgets.QWidget):
         lanes = []
         for ch in range(8):
             raw = chunk[:, ch]
+            past = self.data[max(0, start - FILTER_PAD):start, ch]
+            filtered = filter_window(raw, self.fs, "visualizer", FILTER_PAD, past)
             lanes.append({
                 "label": channel_name(self.labels, ch),
                 "sub": f"gain {self.gains[ch]}",
                 "visible": True,
-                "curves": [(TRACE_COLORS[ch], apply_filter(raw, self.fs, "visualizer"))],
+                "curves": [(TRACE_COLORS[ch], filtered)],
             })
         marks = [(t0 + n / self.fs - m.get("t", 0), m.get("label", ""))
                  for m in self.markers if 0 <= t0 + n / self.fs - m.get("t", 0) <= self.span]
@@ -2258,7 +2312,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _draw(self):
         n = int(self.window_secs * kp.SAMPLE_RATE)
-        hist = list(self.history)[-n:]
+        # Keep a few extra samples before the window so the zero-phase filter
+        # can settle there; they are cropped off again by filter_window().
+        hist = list(self.history)[-(n + FILTER_PAD):]
         if not hist:
             self.trace.set_lanes([], self.window_secs, [],
                                  "Connect the board to see live traces")
@@ -2273,7 +2329,10 @@ class MainWindow(QtWidgets.QMainWindow):
             gain = int(self.ch_gain[ch].currentText())
             counts = np.array([f[1][ch] for f in hist], dtype=float)
             uv = counts * kp.uv_per_count(gain)
-            filtered = apply_filter(uv, kp.SAMPLE_RATE, self.filter_preset)
+            visible = uv[-n:] if uv.size > n else uv
+            past = uv[:-n] if uv.size > n else uv[:0]
+            filtered = filter_window(visible, kp.SAMPLE_RATE,
+                                     self.filter_preset, FILTER_PAD, past)
             filtered_all.append(filtered)
             label = channel_name(labels, ch)
             sub = f"gain {gain}  ·  {kp.uv_per_count(gain):.3f} µV/count"
