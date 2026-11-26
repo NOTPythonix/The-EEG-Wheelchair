@@ -12,7 +12,7 @@ board_id        = 66
 serial_port     = input("What port: ")
 PROMPT_COUNTS   = False
 TRIAL_LENGTH_SECS = 4.0
-TRIALS_PER_CLASS_DEFAULT = {'left': 15, 'right': 15}       # higher number of trials increases precision and accuracy of the model (usable detector requires minimum of 5 ea)
+TRIALS_PER_CLASS_DEFAULT = {'left': 30, 'right': 30}       # higher number of trials increases precision and accuracy of the model (usable detector requires minimum of 5 ea)
 
 # process per live filter step
 STEP_SAMPLES = 1
