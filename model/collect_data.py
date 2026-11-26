@@ -264,6 +264,17 @@ def collect_trials(trials_per_class_map):
     time.sleep(2)
 
     while sum(remaining.values()) > 0:
+        # REST first: capture one baseline window before the cue countdown, so
+        # it cannot contain residue from the upcoming clench.  The 1 s notice
+        # lets the subject settle and keeps the timing predictable.
+        print(f"\n😴 Rest — capturing {window_sec:g} s baseline in 1…")
+        run_for_seconds(1.0)
+        run_for_seconds(window_sec)
+        rest_trial, rest_band = capture_trial_at_current_index("rest", end_idx=None)
+        trials_meta.append(rest_trial)
+        trials_band.append(rest_band)
+        print("   ✔ Rest window saved")
+
         choices = [lbl for lbl in labels if remaining[lbl] > 0]
         lbl = random.choice(choices)
 
@@ -292,19 +303,6 @@ def collect_trials(trials_per_class_map):
         prog = "Progress — " + " | ".join(f"{lbl.capitalize()} {done[lbl]}/{tgt[lbl]}" for lbl in labels) # Line of code from ChatGPT
         print("✔️  Saved:", lbl.upper())
         print(prog)
-
-    # ====== REST at the end (continuous, then take window_sec windows sequentially) ======
-    rest_trials = sum(trials_per_class_map.values())
-    print(f"\n😴 Now collecting REST as {rest_trials} consecutive {window_sec} s windows…")
-
-    for j in range(rest_trials):
-        # Stream for window_sec, then slice the last window_sec window
-        run_for_seconds(window_sec)
-        trial, per_band = capture_trial_at_current_index("rest", end_idx=None)  # end_idx unused inside
-        trials_meta.append(trial)
-        trials_band.append(per_band)
-        if (j+1) % 1 == 0 or j == rest_trials-1:
-            print(f"   REST windows: {j+1}/{rest_trials}")
 
     return trials_meta, trials_band
 

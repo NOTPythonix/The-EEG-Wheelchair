@@ -20,7 +20,7 @@ torch.manual_seed(RANDOM_SEED)
 
 def load_data():
     data = np.load("data/four_class_clench_trials_from_pause.npz")
-    chan_names  = ["CP3", "Fp2", "Fp1", "Cz", "FC6", "FC5", "C1", "C2"]
+    chan_names  = ["CP3", "Fp2", "Fp1", "Cz", "FC6", "FC5", "C3", "C4"]
     labels = data["class_types"]
     sampling_rate = data["sr_decl"]
     eeg_data = EEGData(
