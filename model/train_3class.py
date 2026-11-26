@@ -37,33 +37,37 @@ eeg_data = load_data()
 labels = eeg_data.labels
 data = eeg_data.data
 
+# ----- Code from OpenChamber (Hy4 Flash) -----
 num_samples = len(eeg_data.labels)
 
 rng = np.random.default_rng(RANDOM_SEED)
 idx = rng.permutation(num_samples)
 
-train_mask = np.zeros(num_samples, dtype=bool)
-test_mask = np.zeros(num_samples, dtype=bool)
+n_train = int(num_samples * 0.7)
+n_val = int(num_samples * 0.2)
+train_indices = idx[:n_train]
+val_indices = idx[n_train:n_train + n_val]
+test_indices = idx[n_train + n_val:]
 
-split_index = int(num_samples * 0.8)
+train_data, train_labels = data[train_indices], labels[train_indices]
+val_data, val_labels = data[val_indices], labels[val_indices]
+test_data, test_labels = data[test_indices], labels[test_indices]
 
-train_indices = idx[:split_index]
-test_indices = idx[split_index:]
-
-train_mask[train_indices] = True
-test_mask[test_indices] = True
-
-train_data, train_labels = data[train_mask], labels[train_mask]
-test_data, test_labels = data[test_mask], labels[test_mask]
-
-train_labels, test_labels = train_labels.flatten(), test_labels.flatten()
+train_labels = train_labels.flatten()
+val_labels = val_labels.flatten()
+test_labels = test_labels.flatten()
 
 train_data_tensor = torch.tensor(train_data, dtype=torch.float32)
+val_data_tensor = torch.tensor(val_data, dtype=torch.float32)
 test_data_tensor = torch.tensor(test_data, dtype=torch.float32)
 
 train_labels_tensor = torch.tensor(train_labels, dtype=torch.long)
+val_labels_tensor = torch.tensor(val_labels, dtype=torch.long)
 test_labels_tensor = torch.tensor(test_labels, dtype=torch.long)
-dataset = [train_data_tensor, train_labels_tensor, test_data_tensor, test_labels_tensor]
+dataset = [train_data_tensor, train_labels_tensor,
+           val_data_tensor, val_labels_tensor,
+           test_data_tensor, test_labels_tensor]
+# ----- -----
 
 device = torch.device("cpu")
 
@@ -231,22 +235,29 @@ def train_model(model, epochs, data, val_data):
 
 if __name__ == "__main__":
     print(f"Training ...")
-    train_data_tensor, train_labels_tensor, test_data_tensor, test_labels_tensor = dataset
+    # ----- Code from OpenChamber (Hy4 Flash) -----
+    (train_data_tensor, train_labels_tensor,
+     val_data_tensor, val_labels_tensor,
+     test_data_tensor, test_labels_tensor) = dataset
     train_data_tensor = train_data_tensor.to(device)
     train_labels_tensor = train_labels_tensor.to(device)
+    val_data_tensor = val_data_tensor.to(device)
+    val_labels_tensor = val_labels_tensor.to(device)
     test_data_tensor = test_data_tensor.to(device)
     test_labels_tensor = test_labels_tensor.to(device)
 
     train_dataset = TensorDataset(train_data_tensor, train_labels_tensor)
+    val_dataset = TensorDataset(val_data_tensor, val_labels_tensor)
     test_dataset = TensorDataset(test_data_tensor, test_labels_tensor)
 
     train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)
     test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
 
-    model = NeuroGPTClassifier(input_channels=eeg_data.data.shape[1], num_time_points=eeg_data.data.shape[2], num_classes=3)
     model.to(device)
 
-    train_model(model, epochs=67, data=train_loader, val_data=test_loader)
+    train_model(model, epochs=67, data=train_loader, val_data=val_loader)
+    # ----- -----
     save_model(model, "neurogpt_trained_3class.pth")
     load_model()
     acc = evaluate_model(model, test_loader)

@@ -12,3 +12,6 @@ model/knight_monitor/markers.json
 
 # Freebuff's local project folder
 /.freebuff/
+
+# Training data
+/model/data/
